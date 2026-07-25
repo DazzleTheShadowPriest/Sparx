@@ -8,7 +8,7 @@
 // @match        http://dragonfly-flash.ru/*
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
