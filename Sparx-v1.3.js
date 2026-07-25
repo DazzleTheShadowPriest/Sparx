@@ -1,7 +1,3 @@
-// @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
-// @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
-
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
@@ -10,6 +6,9 @@
 // @author       DazzleThePriest aka TheDoctorCrow (https://www.dragonfly-flash.ru/?id=DazzleThePriest)
 // @match        https://dragonfly-flash.ru/*
 // @match        http://dragonfly-flash.ru/*
+// @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
+// @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
