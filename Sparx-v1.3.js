@@ -1,3 +1,7 @@
+// @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
+// @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
+
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
