@@ -20,6 +20,7 @@
    В Chrome или Edge откройте управление расширением Tampermonkey или Violentmonkey и включите Allow User Scripts / Разрешить пользовательские скрипты.
    Если переключатель отсутствует, откройте chrome://extensions или edge://extensions и включите Режим разработчика.
 3. Нажмите ссылку ниже и подтвердите установку скрипта.
+
 [Установить Sparx](https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js)
 
 4. Перезапустите сайт при нажатии Ctrl + F5.
