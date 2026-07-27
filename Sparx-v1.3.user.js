@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
-// @version      1.3
+// @version      1.4
 // @description  Приветствуйте Sparx, кастомный скрипт, который позволяет настраивать тему Стрекозы под себя. Он позволяет настраивать свой фон, ввиде ссылки на изображение, менять цвет и прозрачность, менять шрифты и его цвет из предложенных, а также встраивать свой собственный ввиде ссылки на него, а также делать углы менее острыми. Короче, сделаю свою Стрекозу максимально своей.
 // @author       DazzleThePriest aka TheDoctorCrow (https://www.dragonfly-flash.ru/?id=DazzleThePriest)
-// @match        https://dragonfly-flash.ru/*
-// @match        http://dragonfly-flash.ru/*
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
+// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/main/Sparx.user.js
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/main/Sparx.user.js
+// @match        https://dragonfly-flash.ru/*
+// @match        http://dragonfly-flash.ru/*
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
@@ -27,6 +28,9 @@
   const OLD_POPUP_KEY = 'df-v56-popup-opaque-settings';
   const WALLPAPER_LAYER_ID =
     `${ID}-wallpaper-layer`;
+
+  const NEUTRAL_FALLBACK_VAR =
+    `--${ID}-neutral-fallback-color`;
 
   const OLD_KEYS = [
     'df-theme-v51-settings',
@@ -250,6 +254,9 @@
 
     neutral:
       `${ID}-neutral`,
+
+    neutralFallback:
+      `${ID}-neutral-fallback`,
 
     canvas:
       `${ID}-canvas`,
@@ -1950,6 +1957,7 @@
     if (stack) {
       css += `
         html body,
+        html body .${LIVE.text},
         html body button,
         html body input,
         html body select,
@@ -2133,6 +2141,7 @@
         .${LIVE.surface},
         .${LIVE.blue},
         .${LIVE.neutral},
+        .${LIVE.neutralFallback},
         .${LIVE.canvas},
         .${LIVE.shell},
         .${LIVE.round},
@@ -2148,6 +2157,7 @@
             LIVE.surface,
             LIVE.blue,
             LIVE.neutral,
+            LIVE.neutralFallback,
             LIVE.canvas,
             LIVE.shell,
             LIVE.round,
@@ -2156,6 +2166,10 @@
             LIVE.text,
             LIVE.canvasImage,
             LIVE.neutralImage
+          );
+
+          element.style.removeProperty(
+            NEUTRAL_FALLBACK_VAR
           );
         }
       );
@@ -2758,11 +2772,19 @@
   }
 
   function markTextElements() {
-    if (
-      !settings.textColorEnabled ||
-      !/^#[\da-f]{6}$/i.test(
+    const colorEnabled =
+      settings.textColorEnabled &&
+      /^#[\da-f]{6}$/i.test(
         settings.textColor
-      )
+      );
+
+    const fontEnabled =
+      settings.font !==
+      'original';
+
+    if (
+      !colorEnabled &&
+      !fontEnabled
     ) {
       return;
     }
@@ -2903,12 +2925,87 @@
           }
         }
       );
+
+    /*
+     * Часть записей Стрекозы хранит обычный текст
+     * прямо внутри DIV, рядом со ссылками и BR.
+     * Старый фильтр отмечал только вложенные ссылки,
+     * поэтому после «читать дальше» получалась смесь
+     * исходного чёрного и выбранного цвета.
+     */
+    const walker =
+      document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT
+      );
+
+    let textNode;
+
+    while (
+      (
+        textNode =
+          walker.nextNode()
+      )
+    ) {
+      if (
+        !String(
+          textNode.textContent ||
+          ''
+        ).trim()
+      ) {
+        continue;
+      }
+
+      const element =
+        textNode.parentElement;
+
+      if (
+        !(
+          element instanceof
+          HTMLElement
+        ) ||
+        element.closest(
+          `#${ID}-panel`
+        ) ||
+        element.id ===
+          `${ID}-button` ||
+        [
+          'HTML',
+          'BODY',
+          'SCRIPT',
+          'STYLE',
+          'LINK',
+          'META',
+          'SVG',
+          'PATH',
+          'TITLE',
+          'NOSCRIPT',
+        ].includes(
+          element.tagName
+        )
+      ) {
+        continue;
+      }
+
+      element.classList.add(
+        LIVE.text
+      );
+
+      if (colorEnabled) {
+        paintTextElement(
+          element
+        );
+      }
+    }
   }
 
   function markLiveSurfaces(
-    statistics
+    statistics,
+    reset = true
   ) {
-    clearLiveClasses();
+    if (reset) {
+      clearLiveClasses();
+    }
 
     markSelectors(
       statistics.surface,
@@ -3021,6 +3118,56 @@
             `${element.id || ''} ` +
             `${element.className || ''}`;
 
+          const originalMatches =
+            colors
+              .map(
+                (color) => ({
+                  color,
+
+                  information:
+                    classifyColor(
+                      color,
+                      'background-color',
+                      signature
+                    ),
+                })
+              )
+              .filter(
+                (match) =>
+                  Boolean(
+                    match.information
+                  )
+              );
+
+          const originalBlue =
+            originalMatches.some(
+              (match) =>
+                match.information
+                  .group ===
+                'blue'
+            );
+
+          const originalNeutralMatch =
+            originalMatches.find(
+              (match) =>
+                match.information
+                  .group ===
+                'neutral'
+            );
+
+          const originalNeutral =
+            Boolean(
+              originalNeutralMatch
+            );
+
+          const originalCanvas =
+            originalMatches.some(
+              (match) =>
+                match.information
+                  .group ===
+                'canvas'
+            );
+
           const control =
             element.matches(`
               button,
@@ -3045,6 +3192,12 @@
                 signature
               );
 
+          const largePageSurface =
+            rect.width >=
+              innerWidth * 0.98 &&
+            rect.height >=
+              innerHeight * 0.72;
+
           if (
             element.classList.contains(
               LIVE.blue
@@ -3060,27 +3213,71 @@
           }
 
           if (
-            blueDistance <= 78 &&
-            blueDistance <=
-              neutralDistance &&
-            blueDistance <=
-              canvasDistance
+            originalBlue ||
+            (
+              blueDistance <= 78 &&
+              blueDistance <=
+                neutralDistance &&
+              blueDistance <=
+                canvasDistance
+            )
           ) {
             element.classList.add(
               LIVE.surface,
               LIVE.blue
             );
           } else if (
-            neutralSurface &&
-            neutralDistance <= 64 &&
-            neutralDistance <=
-              blueDistance
+            !largePageSurface &&
+            (
+              originalNeutral ||
+              (
+                neutralSurface &&
+                neutralDistance <= 64 &&
+                neutralDistance <=
+                  blueDistance
+              )
+            )
           ) {
             element.classList.add(
               LIVE.surface,
               LIVE.neutral
             );
+
+            if (
+              originalNeutralMatch
+            ) {
+              const mappedNeutral =
+                paletteColor(
+                  'neutral',
+
+                  originalNeutralMatch
+                    .information
+                    .position,
+
+                  originalNeutralMatch
+                    .color
+                    .a *
+                  groupOpacity(
+                    'neutral',
+                    'background-color'
+                  )
+                );
+
+              if (mappedNeutral) {
+                element.classList.add(
+                  LIVE.neutralFallback
+                );
+
+                element.style.setProperty(
+                  NEUTRAL_FALLBACK_VAR,
+                  colorToCss(
+                    mappedNeutral
+                  )
+                );
+              }
+            }
           } else if (
+            originalCanvas ||
             canvasDistance <= 78
           ) {
             element.classList.add(
@@ -5155,6 +5352,38 @@
     }
 
     if (
+      settings.neutralEnabled
+    ) {
+      css += `
+        /*
+         * Динамические белые карточки иногда имеют
+         * inline-background и не присутствуют в CSS
+         * во время первой сборки. Для них сохраняется
+         * вычисленный оттенок палитры отдельно.
+         */
+        .${LIVE.neutralFallback}:not(
+          .${LIVE.blue}
+        ):not(
+          .${LIVE.canvas}
+        ):not(
+          .${INTEGRATED.popupRoot}
+        ) {
+          background-color:
+            var(
+              ${NEUTRAL_FALLBACK_VAR}
+            ) !important;
+        }
+
+        .${LIVE.neutralFallback}:not(
+          .${LIVE.neutralImage}
+        ) {
+          background-image:
+            none !important;
+        }
+      `;
+    }
+
+    if (
       settings.neutralEnabled &&
       Number(
         settings
@@ -5173,6 +5402,8 @@
           .${LIVE.canvas}
         ):not(
           .${INTEGRATED.popupRoot}
+        ):not(
+          .${LIVE.neutralFallback}
         ) {
           background-color:
             ${rgbaFromHex(
@@ -5194,6 +5425,8 @@
           .${LIVE.canvas}
         ):not(
           .${INTEGRATED.popupRoot}
+        ):not(
+          .${LIVE.neutralFallback}
         ):not(
           .${LIVE.neutralImage}
         ) {
@@ -5764,7 +5997,8 @@
     }
 
     markLiveSurfaces(
-      lastStatistics
+      lastStatistics,
+      false
     );
 
     applyAddressBarColor();
@@ -6408,7 +6642,7 @@
 
     panel.innerHTML = `
       <b>
-        Sparx — Своя тема для соцсети «Стрекоза» v1.3
+        Sparx — Своя тема для соцсети «Стрекоза» v1.4
       </b>
 
       <div class="master-toggle">
@@ -7235,26 +7469,41 @@
      */
     new MutationObserver(
       (mutations) => {
-        const added =
+        const stylesheetChanged =
           mutations.some(
-            (mutation) =>
-              [
-                ...mutation
-                  .addedNodes,
-              ].some(
-                (node) =>
-                  node instanceof
-                    HTMLStyleElement ||
-                  (
+            (mutation) => {
+              const candidates = [
+                mutation.target,
+                ...mutation.addedNodes,
+                ...mutation.removedNodes,
+              ];
+
+              return candidates.some(
+                (node) => {
+                  if (
+                    node instanceof
+                    HTMLStyleElement
+                  ) {
+                    return ![
+                      `${ID}-theme`,
+                      `${ID}-ui`,
+                    ].includes(
+                      node.id
+                    );
+                  }
+
+                  return (
                     node instanceof
                       HTMLLinkElement &&
                     node.rel ===
                       'stylesheet'
-                  )
-              )
+                  );
+                }
+              );
+            }
           );
 
-        if (added) {
+        if (stylesheetChanged) {
           scheduleSafeRebuild(
             150
           );
@@ -7266,6 +7515,19 @@
       {
         childList:
           true,
+
+        subtree:
+          true,
+
+        attributes:
+          true,
+
+        attributeFilter: [
+          'href',
+          'media',
+          'disabled',
+          'rel',
+        ],
       }
     );
 
@@ -7278,10 +7540,6 @@
      */
     new MutationObserver(
       (mutations) => {
-        if (integratedApplying) {
-          return;
-        }
-
         const relevant =
           mutations.filter(
             (mutation) =>
@@ -7451,15 +7709,89 @@
     window.addEventListener(
       'resize',
 
-      () =>
+      () => {
+        scheduleDynamicRefresh(
+          120
+        );
+
         scheduleIntegratedApply(
           20
+        );
+      },
+
+      {
+        passive: true,
+      }
+    );
+
+    /*
+     * Бесконечная лента иногда вставляет записи
+     * пакетно и без отдельного события навигации.
+     * Отложенный проход после скролла подхватывает
+     * пропущенные карточки, текст и скругления.
+     */
+    window.addEventListener(
+      'scroll',
+
+      () =>
+        scheduleDynamicRefresh(
+          180
         ),
 
       {
         passive: true,
       }
     );
+
+    let observedLocation =
+      location.href;
+
+    window.setInterval(
+      () => {
+        if (
+          location.href ===
+          observedLocation
+        ) {
+          return;
+        }
+
+        observedLocation =
+          location.href;
+
+        scheduleSafeRebuild(
+          120
+        );
+
+        scheduleDynamicRefresh(
+          220
+        );
+      },
+
+      500
+    );
+
+    for (
+      const eventName
+      of [
+        'pageshow',
+        'popstate',
+        'hashchange',
+      ]
+    ) {
+      window.addEventListener(
+        eventName,
+
+        () => {
+          scheduleSafeRebuild(
+            120
+          );
+
+          scheduleDynamicRefresh(
+            220
+          );
+        }
+      );
+    }
 
     document.addEventListener(
       'click',
@@ -7475,7 +7807,12 @@
           ]
         ) {
           window.setTimeout(
-            applyIntegratedFixes,
+            () => {
+              applyIntegratedFixes();
+              scheduleDynamicRefresh(
+                40
+              );
+            },
             delay
           );
         }
