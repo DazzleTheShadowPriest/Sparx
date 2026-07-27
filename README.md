@@ -24,3 +24,5 @@
 [Установить Sparx](https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js)
 
 4. Перезапустите сайт при нажатии Ctrl + F5.
+
+5. P.s Не обращайте внимание на название файла пж, я блин дебил и неправильно назвал его. Он обновляется, просто... пожалуйста, не обращайте внимание на имя.
