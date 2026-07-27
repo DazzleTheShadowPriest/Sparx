@@ -6,8 +6,8 @@
 // @author       DazzleThePriest aka TheDoctorCrow (https://www.dragonfly-flash.ru/?id=DazzleThePriest)
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
+// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
 // @match        https://dragonfly-flash.ru/*
 // @match        http://dragonfly-flash.ru/*
 // @run-at       document-idle
