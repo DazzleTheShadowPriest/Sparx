@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
-// @version      1.4
+// @version      1.4.1
 // @description  Приветствуйте Sparx, кастомный скрипт, который позволяет настраивать тему Стрекозы под себя. Он позволяет настраивать свой фон, ввиде ссылки на изображение, менять цвет и прозрачность, менять шрифты и его цвет из предложенных, а также встраивать свой собственный ввиде ссылки на него, а также делать углы менее острыми. Короче, сделаю свою Стрекозу максимально своей.
-// @author       DazzleThePriest aka TheDoctorCrow (https://www.dragonfly-flash.ru/?id=DazzleThePriest)
+// @author       DazzleThePriest aka TheDoctorCrow (https://dragonfly-flash.com/?id=DazzleThePriest)
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
 // @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
 // @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
-// @match        https://dragonfly-flash.ru/*
-// @match        http://dragonfly-flash.ru/*
+// @match        https://dragonfly-flash.com/*
+// @match        http://dragonfly-flash.com/*
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
@@ -6642,7 +6642,7 @@
 
     panel.innerHTML = `
       <b>
-        Sparx — Своя тема для соцсети «Стрекоза» v1.4
+        Sparx — Своя тема для соцсети «Стрекоза» v1.4.1
       </b>
 
       <div class="master-toggle">
