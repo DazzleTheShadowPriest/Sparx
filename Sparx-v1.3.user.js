@@ -7715,7 +7715,7 @@
 
     panel.innerHTML = `
       <b>
-        Sparx — Своя тема для соцсети «Стрекоза» v1.7
+        Sparx — Своя тема для соцсети «Стрекоза» v1.5
       </b>
 
       <div class="master-toggle">
