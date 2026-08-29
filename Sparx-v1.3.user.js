@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
-// @version      1.4.1
+// @version      1.5
 // @description  Приветствуйте Sparx, кастомный скрипт, который позволяет настраивать тему Стрекозы под себя. Он позволяет настраивать свой фон, ввиде ссылки на изображение, менять цвет и прозрачность, менять шрифты и его цвет из предложенных, а также встраивать свой собственный ввиде ссылки на него, а также делать углы менее острыми. Короче, сделаю свою Стрекозу максимально своей.
-// @author       DazzleThePriest aka TheDoctorCrow (https://dragonfly-flash.com/?id=DazzleThePriest)
+// @author       DazzleThePriest aka TheDoctorCrow (https://www.dragonfly-flash.com/?id=DazzleThePriest)
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
+// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.js
 // @match        https://dragonfly-flash.com/*
 // @match        http://dragonfly-flash.com/*
 // @run-at       document-idle
@@ -25,6 +25,17 @@
 
   const ID = 'df-theme-v56';
   const KEY = 'df-theme-v56-settings';
+  const LOCAL_WALLPAPER_KEY =
+    'df-theme-v56-local-wallpaper';
+  const LOCAL_FONT_KEY =
+    'df-theme-v56-local-font';
+  const THEME_SLOTS_KEY =
+    'df-theme-v56-theme-slots';
+  const THEME_SLOT_COUNT = 5;
+  const THEME_SLOT_WALLPAPER_PREFIX =
+    'df-theme-v56-slot-wallpaper-';
+  const THEME_SLOT_FONT_PREFIX =
+    'df-theme-v56-slot-font-';
   const OLD_POPUP_KEY = 'df-v56-popup-opaque-settings';
   const WALLPAPER_LAYER_ID =
     `${ID}-wallpaper-layer`;
@@ -190,9 +201,12 @@
     );
 
   let themeStyle;
+  let effectsStyle;
   let uiStyle;
   let rebuildTimer;
   let dynamicRefreshTimer;
+  let dynamicFullRefresh = false;
+  const dynamicRoots = new Set();
   let generation = 0;
   let integratedTimer;
   let integratedApplying = false;
@@ -231,6 +245,636 @@
     status:
       'Кастомный шрифт не выбран.',
   };
+
+  const LOCAL_FILE_LIMITS = {
+    wallpaper:
+      24 * 1024 * 1024,
+
+    font:
+      12 * 1024 * 1024,
+  };
+
+  function readStoredAsset(
+    key
+  ) {
+    const stored =
+      GM_getValue(
+        key,
+        ''
+      );
+
+    if (!stored) {
+      return null;
+    }
+
+    try {
+      const asset =
+        typeof stored ===
+          'string'
+          ? JSON.parse(stored)
+          : stored;
+
+      if (
+        asset &&
+        typeof asset ===
+          'object' &&
+        typeof asset.dataUrl ===
+          'string' &&
+        asset.dataUrl.startsWith(
+          'data:'
+        )
+      ) {
+        return asset;
+      }
+    } catch {
+      // Повреждённое старое значение игнорируется.
+    }
+
+    return null;
+  }
+
+  let localWallpaperAsset =
+    readStoredAsset(
+      LOCAL_WALLPAPER_KEY
+    );
+
+  let localFontAsset =
+    readStoredAsset(
+      LOCAL_FONT_KEY
+    );
+
+  const localAssetUrls = {
+    wallpaper: '',
+    font: '',
+  };
+
+  function assetFor(
+    kind
+  ) {
+    return kind ===
+      'wallpaper'
+      ? localWallpaperAsset
+      : localFontAsset;
+  }
+
+  function assetKeyFor(
+    kind
+  ) {
+    return kind ===
+      'wallpaper'
+      ? LOCAL_WALLPAPER_KEY
+      : LOCAL_FONT_KEY;
+  }
+
+  function revokeLocalAssetUrl(
+    kind
+  ) {
+    const url =
+      localAssetUrls[kind];
+
+    if (url) {
+      if (
+        url.startsWith(
+          'blob:'
+        )
+      ) {
+        URL.revokeObjectURL(
+          url
+        );
+      }
+
+      localAssetUrls[kind] =
+        '';
+    }
+  }
+
+  function dataUrlToBlob(
+    dataUrl
+  ) {
+    const match =
+      String(
+        dataUrl ||
+        ''
+      ).match(
+        /^data:([^;,]*)(;base64)?,(.*)$/s
+      );
+
+    if (!match) {
+      return null;
+    }
+
+    const type =
+      match[1] ||
+      'application/octet-stream';
+
+    const encoded =
+      match[3] ||
+      '';
+
+    try {
+      if (match[2]) {
+        const binary =
+          atob(encoded);
+
+        const bytes =
+          new Uint8Array(
+            binary.length
+          );
+
+        for (
+          let index = 0;
+          index < binary.length;
+          index += 1
+        ) {
+          bytes[index] =
+            binary.charCodeAt(
+              index
+            );
+        }
+
+        return new Blob(
+          [bytes],
+          { type }
+        );
+      }
+
+      return new Blob(
+        [
+          decodeURIComponent(
+            encoded
+          ),
+        ],
+        { type }
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function localAssetObjectUrl(
+    kind
+  ) {
+    const asset =
+      assetFor(kind);
+
+    if (!asset) {
+      return '';
+    }
+
+    if (
+      localAssetUrls[kind]
+    ) {
+      return localAssetUrls[
+        kind
+      ];
+    }
+
+    const blob =
+      dataUrlToBlob(
+        asset.dataUrl
+      );
+
+    if (!blob) {
+      return '';
+    }
+
+    try {
+      localAssetUrls[kind] =
+        URL.createObjectURL(
+          blob
+        );
+
+      return localAssetUrls[kind];
+    } catch {
+      /*
+       * Старые Safari/WebKit могут не разрешить
+       * blob:-URL из sandbox userscript. Data URL
+       * остаётся полностью локальным запасным путём.
+       */
+      return asset.dataUrl;
+    }
+  }
+
+  function currentWallpaperSource() {
+    return (
+      localAssetObjectUrl(
+        'wallpaper'
+      ) ||
+      String(
+        settings.wallpaper ||
+        ''
+      ).trim()
+    );
+  }
+
+  function currentFontFormat() {
+    return fontFormat(
+      localFontAsset?.name ||
+      settings.customFontUrl ||
+      ''
+    );
+  }
+
+  function formatFileSize(
+    bytes
+  ) {
+    const size =
+      Number(bytes) || 0;
+
+    if (size < 1024) {
+      return `${size} Б`;
+    }
+
+    if (
+      size <
+      1024 * 1024
+    ) {
+      return `${(
+        size / 1024
+      ).toFixed(1)} КБ`;
+    }
+
+    return `${(
+      size /
+      (1024 * 1024)
+    ).toFixed(1)} МБ`;
+  }
+
+  function fileToDataUrl(
+    file
+  ) {
+    return new Promise(
+      (resolve, reject) => {
+        const reader =
+          new FileReader();
+
+        reader.onload =
+          () =>
+            resolve(
+              String(
+                reader.result ||
+                ''
+              )
+            );
+
+        reader.onerror =
+          () =>
+            reject(
+              reader.error ||
+              new Error(
+                'Не удалось прочитать файл.'
+              )
+            );
+
+        reader.readAsDataURL(
+          file
+        );
+      }
+    );
+  }
+
+  async function storeLocalAsset(
+    kind,
+    file
+  ) {
+    if (!file) {
+      return false;
+    }
+
+    const limit =
+      LOCAL_FILE_LIMITS[kind];
+
+    if (
+      limit &&
+      file.size > limit
+    ) {
+      window.alert(
+        kind === 'wallpaper'
+          ? 'Файл обоев слишком большой. Максимум — 24 МБ.'
+          : 'Файл шрифта слишком большой. Максимум — 12 МБ.'
+      );
+
+      return false;
+    }
+
+    let dataUrl = '';
+
+    try {
+      dataUrl =
+        await fileToDataUrl(
+          file
+        );
+    } catch (error) {
+      console.error(
+        '[Sparx] Не удалось прочитать локальный файл:',
+        error
+      );
+
+      window.alert(
+        'Не удалось прочитать выбранный файл.'
+      );
+
+      return false;
+    }
+
+    const asset = {
+      name:
+        file.name ||
+        'local-file',
+
+      type:
+        file.type ||
+        'application/octet-stream',
+
+      size:
+        file.size || 0,
+
+      dataUrl,
+    };
+
+    try {
+      GM_setValue(
+        assetKeyFor(kind),
+        JSON.stringify(asset)
+      );
+    } catch (error) {
+      console.error(
+        '[Sparx] Не удалось сохранить локальный файл:',
+        error
+      );
+
+      window.alert(
+        'Не удалось сохранить файл в хранилище менеджера скриптов. Попробуй файл меньшего размера.'
+      );
+
+      return false;
+    }
+
+    revokeLocalAssetUrl(
+      kind
+    );
+
+    if (kind === 'wallpaper') {
+      localWallpaperAsset =
+        asset;
+    } else {
+      localFontAsset =
+        asset;
+    }
+
+    return true;
+  }
+
+  function clearLocalAsset(
+    kind
+  ) {
+    revokeLocalAssetUrl(
+      kind
+    );
+
+    GM_deleteValue(
+      assetKeyFor(kind)
+    );
+
+    if (kind === 'wallpaper') {
+      localWallpaperAsset =
+        null;
+    } else {
+      localFontAsset =
+        null;
+    }
+  }
+
+  function cloneThemeSettings(
+    source
+  ) {
+    let copy = {};
+
+    try {
+      copy = JSON.parse(
+        JSON.stringify(
+          source || {}
+        )
+      );
+    } catch {
+      copy = {};
+    }
+
+    const next = {
+      ...DEFAULTS,
+      ...copy,
+    };
+
+    next.cornerRadius =
+      Math.max(
+        0,
+        Math.min(
+          8,
+          Number(
+            next.cornerRadius
+          ) || 0
+        )
+      );
+
+    return next;
+  }
+
+  function loadThemeSlots() {
+    const stored =
+      GM_getValue(
+        THEME_SLOTS_KEY,
+        ''
+      );
+
+    let raw = [];
+
+    try {
+      raw =
+        typeof stored ===
+          'string'
+          ? JSON.parse(
+              stored || '[]'
+            )
+          : stored;
+    } catch {
+      raw = [];
+    }
+
+    if (!Array.isArray(raw)) {
+      raw = [];
+    }
+
+    return Array.from(
+      {
+        length:
+          THEME_SLOT_COUNT,
+      },
+      (_, index) => {
+        const slot =
+          raw[index];
+
+        if (
+          !slot ||
+          typeof slot !==
+            'object' ||
+          !slot.settings ||
+          typeof slot.settings !==
+            'object'
+        ) {
+          return null;
+        }
+
+        return {
+          name:
+            String(
+              slot.name ||
+              `Тема ${index + 1}`
+            ).slice(0, 48),
+
+          settings:
+            cloneThemeSettings(
+              slot.settings
+            ),
+
+          savedAt:
+            Number(
+              slot.savedAt
+            ) || 0,
+        };
+      }
+    );
+  }
+
+  let themeSlots =
+    loadThemeSlots();
+
+  function saveThemeSlots() {
+    GM_setValue(
+      THEME_SLOTS_KEY,
+      JSON.stringify(
+        themeSlots
+      )
+    );
+  }
+
+  function themeSlotAssetKey(
+    kind,
+    index
+  ) {
+    return `${
+      kind === 'wallpaper'
+        ? THEME_SLOT_WALLPAPER_PREFIX
+        : THEME_SLOT_FONT_PREFIX
+    }${index}`;
+  }
+
+  function writeStoredAsset(
+    key,
+    asset
+  ) {
+    if (
+      asset &&
+      typeof asset.dataUrl ===
+        'string' &&
+      asset.dataUrl.startsWith(
+        'data:'
+      )
+    ) {
+      GM_setValue(
+        key,
+        JSON.stringify(
+          asset
+        )
+      );
+    } else {
+      GM_deleteValue(
+        key
+      );
+    }
+  }
+
+  function saveCurrentAssetsToThemeSlot(
+    index
+  ) {
+    writeStoredAsset(
+      themeSlotAssetKey(
+        'wallpaper',
+        index
+      ),
+      localWallpaperAsset
+    );
+
+    writeStoredAsset(
+      themeSlotAssetKey(
+        'font',
+        index
+      ),
+      localFontAsset
+    );
+  }
+
+  function applyThemeSlotAssets(
+    index
+  ) {
+    revokeLocalAssetUrl(
+      'wallpaper'
+    );
+
+    revokeLocalAssetUrl(
+      'font'
+    );
+
+    localWallpaperAsset =
+      readStoredAsset(
+        themeSlotAssetKey(
+          'wallpaper',
+          index
+        )
+      );
+
+    localFontAsset =
+      readStoredAsset(
+        themeSlotAssetKey(
+          'font',
+          index
+        )
+      );
+
+    writeStoredAsset(
+      LOCAL_WALLPAPER_KEY,
+      localWallpaperAsset
+    );
+
+    writeStoredAsset(
+      LOCAL_FONT_KEY,
+      localFontAsset
+    );
+
+    clearFontCache();
+  }
+
+  function clearThemeSlot(
+    index
+  ) {
+    themeSlots[index] =
+      null;
+
+    saveThemeSlots();
+
+    GM_deleteValue(
+      themeSlotAssetKey(
+        'wallpaper',
+        index
+      )
+    );
+
+    GM_deleteValue(
+      themeSlotAssetKey(
+        'font',
+        index
+      )
+    );
+  }
 
   const probe =
     document.createElement(
@@ -1435,6 +2079,7 @@
         if (
           [
             `${ID}-theme`,
+            `${ID}-effects`,
             `${ID}-ui`,
           ].includes(
             sheet.ownerNode?.id
@@ -1472,15 +2117,13 @@
   }
 
   function syncWallpaperLayer() {
+    const source =
+      currentWallpaperSource();
+
     const active =
       settings.enabled &&
       settings.wallpaperEnabled &&
-      Boolean(
-        String(
-          settings.wallpaper ||
-          ''
-        ).trim()
-      );
+      Boolean(source);
 
     let layer =
       document.getElementById(
@@ -1521,12 +2164,13 @@
   }
 
   function wallpaperCss() {
+    const source =
+      currentWallpaperSource();
+
     if (
       !settings
         .wallpaperEnabled ||
-      !String(
-        settings.wallpaper
-      ).trim()
+      !source
     ) {
       return '';
     }
@@ -1622,9 +2266,7 @@
 
         background-image:
           url(${JSON.stringify(
-            String(
-              settings.wallpaper
-            ).trim()
+            source
           )}) !important;
 
         background-size:
@@ -1919,10 +2561,7 @@
 
       if (source) {
         const format =
-          fontFormat(
-            settings
-              .customFontUrl
-          );
+          currentFontFormat();
 
         fontFace = `
           @font-face {
@@ -2175,7 +2814,48 @@
       );
   }
 
+  function scopedElements(
+    root,
+    selector = '*'
+  ) {
+    const scope =
+      root instanceof Element ||
+      root instanceof Document ||
+      root instanceof DocumentFragment
+        ? root
+        : document.body;
+
+    const elements = [];
+
+    if (
+      scope instanceof Element
+    ) {
+      try {
+        if (
+          scope.matches(selector)
+        ) {
+          elements.push(scope);
+        }
+      } catch {
+        return elements;
+      }
+    }
+
+    try {
+      elements.push(
+        ...scope.querySelectorAll(
+          selector
+        )
+      );
+    } catch {
+      // Неподдерживаемый селектор.
+    }
+
+    return elements;
+  }
+
   function markSelectors(
+    root,
     selectors,
     ...classes
   ) {
@@ -2205,10 +2885,10 @@
         }
 
         try {
-          document
-            .querySelectorAll(
-              selector
-            )
+          scopedElements(
+            root,
+            selector
+          )
             .forEach(
               (element) => {
                 if (
@@ -2632,15 +3312,19 @@
     );
   }
 
-  function markIndependentRoundables() {
+  function markIndependentRoundables(
+    root = document.body
+  ) {
     if (
       !settings.roundedEnabled
     ) {
       return;
     }
 
-    document.body
-      .querySelectorAll('*')
+    scopedElements(
+      root,
+      '*'
+    )
       .forEach(
         (element) => {
           if (
@@ -2771,7 +3455,9 @@
       );
   }
 
-  function markTextElements() {
+  function markTextElements(
+    root = document.body
+  ) {
     const colorEnabled =
       settings.textColorEnabled &&
       /^#[\da-f]{6}$/i.test(
@@ -2817,8 +3503,10 @@
     const semanticText =
       /(?:^|[\s_-])(?:user|username|nickname|name|author|title|caption|label|date|time|status|online|notification|notice|message-text|profile-name)(?:$|[\s_-])/i;
 
-    document.body
-      .querySelectorAll('*')
+    scopedElements(
+      root,
+      '*'
+    )
       .forEach(
         (element) => {
           if (
@@ -2933,9 +3621,14 @@
      * поэтому после «читать дальше» получалась смесь
      * исходного чёрного и выбранного цвета.
      */
+    const walkerRoot =
+      root instanceof Node
+        ? root
+        : document.body;
+
     const walker =
       document.createTreeWalker(
-        document.body,
+        walkerRoot,
         NodeFilter.SHOW_TEXT
       );
 
@@ -3001,30 +3694,35 @@
 
   function markLiveSurfaces(
     statistics,
-    reset = true
+    reset = true,
+    root = document.body
   ) {
     if (reset) {
       clearLiveClasses();
     }
 
     markSelectors(
+      root,
       statistics.surface,
       LIVE.surface
     );
 
     markSelectors(
+      root,
       statistics.blue,
       LIVE.surface,
       LIVE.blue
     );
 
     markSelectors(
+      root,
       statistics.neutral,
       LIVE.surface,
       LIVE.neutral
     );
 
     markSelectors(
+      root,
       statistics.canvas,
       LIVE.surface,
       LIVE.canvas
@@ -3035,8 +3733,10 @@
      * вычисленных цветов нужна для
      * элементов с CSS-переменными.
      */
-    document.body
-      .querySelectorAll('*')
+    scopedElements(
+      root,
+      '*'
+    )
       .forEach(
         (element) => {
           if (
@@ -3292,13 +3992,17 @@
      * Скругление больше не зависит от
      * палитры серо-бежевого фона.
      */
-    markIndependentRoundables();
-    markTextElements();
+    markIndependentRoundables(
+      root
+    );
+    markTextElements(
+      root
+    );
 
-    document
-      .querySelectorAll(
-        `.${LIVE.canvas}`
-      )
+    scopedElements(
+      root,
+      `.${LIVE.canvas}`
+    )
       .forEach(
         (element) => {
           const image =
@@ -3316,10 +4020,10 @@
         }
       );
 
-    document
-      .querySelectorAll(
-        `.${LIVE.neutral}`
-      )
+    scopedElements(
+      root,
+      `.${LIVE.neutral}`
+    )
       .forEach(
         (element) => {
           const image =
@@ -3338,7 +4042,9 @@
       );
 
     const shell =
-      findWindowShell();
+      reset
+        ? findWindowShell()
+        : null;
 
     if (shell) {
       shell.classList.add(
@@ -3415,18 +4121,17 @@
   }
 
   function glassBackgroundSource() {
+    const wallpaperSource =
+      currentWallpaperSource();
+
     if (
       settings.wallpaperEnabled &&
-      String(
-        settings.wallpaper
-      ).trim()
+      wallpaperSource
     ) {
       return (
         `url(` +
         `${JSON.stringify(
-          String(
-            settings.wallpaper
-          ).trim()
+          wallpaperSource
         )}` +
         `)`
       );
@@ -3527,6 +4232,9 @@
           return (
             /^https?:\/\//i
               .test(value) ||
+            value.includes(
+              'dragonfly-flash.com'
+            ) ||
             value.includes(
               'dragonfly-flash.ru'
             )
@@ -5822,6 +6530,9 @@
             !/^https?:\/\//i
               .test(value) &&
             !value.includes(
+              'dragonfly-flash.com'
+            ) &&
+            !value.includes(
               'dragonfly-flash.ru'
             )
           ) {
@@ -5973,6 +6684,56 @@
     );
   }
 
+  function queueDynamicRoot(
+    node
+  ) {
+    const element =
+      node instanceof HTMLElement
+        ? node
+        : node?.parentElement;
+
+    if (
+      !element ||
+      !element.isConnected ||
+      element.closest?.(
+        `#${ID}-panel`
+      ) ||
+      element.id ===
+        `${ID}-button` ||
+      element.id ===
+        WALLPAPER_LAYER_ID ||
+      element.classList?.contains(
+        INTEGRATED.glassLayer
+      )
+    ) {
+      return;
+    }
+
+    for (
+      const existing
+      of [...dynamicRoots]
+    ) {
+      if (
+        existing === element ||
+        existing.contains(element)
+      ) {
+        return;
+      }
+
+      if (
+        element.contains(existing)
+      ) {
+        dynamicRoots.delete(
+          existing
+        );
+      }
+    }
+
+    dynamicRoots.add(
+      element
+    );
+  }
+
   function refreshDynamicTheme() {
     dynamicRefreshTimer = 0;
 
@@ -5980,15 +6741,11 @@
       !settings.enabled ||
       !lastStatistics
     ) {
+      dynamicRoots.clear();
+      dynamicFullRefresh = false;
       return;
     }
 
-    /*
-     * Во время набора не снимаем и не назначаем
-     * классы заново. Даже краткое переустройство
-     * CSS вокруг textarea может изменить расчёт
-     * её высоты на один кадр и вызвать дёргание.
-     */
     if (userIsEditing()) {
       scheduleDynamicRefresh(
         180
@@ -5996,18 +6753,64 @@
       return;
     }
 
-    markLiveSurfaces(
-      lastStatistics,
-      false
-    );
+    const full =
+      dynamicFullRefresh ||
+      !dynamicRoots.size;
+
+    const roots =
+      full
+        ? [document.body]
+        : [...dynamicRoots];
+
+    dynamicRoots.clear();
+    dynamicFullRefresh = false;
+
+    for (
+      const root
+      of roots
+    ) {
+      if (
+        root?.isConnected
+      ) {
+        markLiveSurfaces(
+          lastStatistics,
+          false,
+          root
+        );
+      }
+    }
 
     applyAddressBarColor();
-    applyIntegratedFixes();
+    scheduleIntegratedApply(
+      20
+    );
   }
 
   function scheduleDynamicRefresh(
-    delay = 80
+    delay = 80,
+    roots = null,
+    full = false
   ) {
+    if (full) {
+      dynamicFullRefresh = true;
+      dynamicRoots.clear();
+    } else if (roots) {
+      const list =
+        Array.isArray(roots) ||
+        roots instanceof Set
+          ? roots
+          : [roots];
+
+      for (
+        const root
+        of list
+      ) {
+        queueDynamicRoot(
+          root
+        );
+      }
+    }
+
     clearTimeout(
       dynamicRefreshTimer
     );
@@ -6063,6 +6866,22 @@
         );
     }
 
+    if (!effectsStyle) {
+      effectsStyle =
+        document.createElement(
+          'style'
+        );
+
+      effectsStyle.id =
+        `${ID}-effects`;
+
+      document
+        .documentElement
+        .append(
+          effectsStyle
+        );
+    }
+
     syncWallpaperLayer();
 
     if (
@@ -6070,6 +6889,7 @@
     ) {
       lastStatistics = null;
       themeStyle.textContent = '';
+      effectsStyle.textContent = '';
       clearLiveClasses();
       clearIntegratedClasses();
       applyAddressBarColor();
@@ -6082,11 +6902,24 @@
       settings.font ===
       'custom'
     ) {
-      customFontSource =
-        await loadCustomFont(
-          settings
-            .customFontUrl
+      if (localFontAsset) {
+        customFontSource =
+          localAssetObjectUrl(
+            'font'
+          );
+
+        setFontStatus(
+          customFontSource
+            ? `Локальный шрифт: ${localFontAsset.name}`
+            : 'Не удалось открыть локальный шрифт.'
         );
+      } else {
+        customFontSource =
+          await loadCustomFont(
+            settings
+              .customFontUrl
+          );
+      }
 
       if (
         currentGeneration !==
@@ -6174,17 +7007,17 @@
     );
 
     /*
-     * После определения элементов
-     * применяется стекло и закругление.
-     * Фон остаётся последним CSS-блоком.
+     * Эффекты вынесены во второй style-слой.
+     * Базовый CSS и @font-face больше не парсятся
+     * повторно только ради стекла и скругления.
      */
-    themeStyle.textContent =
-      css +
-      effectsCss() +
-      wallpaper;
+    effectsStyle.textContent =
+      effectsCss();
 
     applyAddressBarColor();
-    applyIntegratedFixes();
+    scheduleIntegratedApply(
+      0
+    );
   }
 
   function userInterfaceCss() {
@@ -6419,6 +7252,110 @@
           ) !important;
       }
 
+      #${ID}-panel .theme-slots {
+        display:
+          grid !important;
+
+        grid-template-columns:
+          repeat(
+            5,
+            minmax(
+              108px,
+              1fr
+            )
+          ) !important;
+
+        gap:
+          7px !important;
+      }
+
+      #${ID}-panel .theme-slot {
+        min-width:
+          0 !important;
+
+        padding:
+          7px !important;
+
+        border:
+          1px solid
+          #999 !important;
+
+        background:
+          #f5f2e8 !important;
+      }
+
+      #${ID}-panel .theme-slot-number {
+        margin-bottom:
+          5px !important;
+
+        font-weight:
+          bold !important;
+      }
+
+      #${ID}-panel .theme-slot input[type="text"] {
+        width:
+          100% !important;
+
+        min-width:
+          0 !important;
+
+        margin-bottom:
+          5px !important;
+      }
+
+      #${ID}-panel .theme-slot-status {
+        min-height:
+          28px !important;
+
+        margin-bottom:
+          6px !important;
+
+        color:
+          #555 !important;
+
+        font-size:
+          11px !important;
+
+        line-height:
+          1.25 !important;
+      }
+
+      #${ID}-panel .theme-slot-actions {
+        display:
+          flex !important;
+
+        gap:
+          4px !important;
+
+        flex-wrap:
+          wrap !important;
+      }
+
+      #${ID}-panel .theme-slot-actions button {
+        flex:
+          1 1 45% !important;
+
+        min-width:
+          0 !important;
+
+        padding:
+          4px 5px !important;
+
+        font-size:
+          11px !important;
+      }
+
+      #${ID}-panel button:disabled {
+        color:
+          #777 !important;
+
+        cursor:
+          default !important;
+
+        opacity:
+          .65 !important;
+      }
+
       #${ID}-panel .actions {
         display:
           flex !important;
@@ -6456,6 +7393,42 @@
           #111 !important;
       }
 
+      #${ID}-panel .local-file {
+        display:
+          flex !important;
+
+        align-items:
+          center !important;
+
+        gap:
+          7px !important;
+
+        flex-wrap:
+          wrap !important;
+      }
+
+      #${ID}-panel .local-file input[type="file"] {
+        width:
+          min(100%, 360px) !important;
+
+        padding:
+          2px !important;
+      }
+
+      #${ID}-panel .local-file-status {
+        width:
+          100% !important;
+
+        color:
+          #444 !important;
+
+        font-size:
+          11px !important;
+
+        overflow-wrap:
+          anywhere !important;
+      }
+
       @media (
         max-width:
           700px
@@ -6463,6 +7436,17 @@
         #${ID}-panel .grid {
           grid-template-columns:
             1fr !important;
+        }
+
+        #${ID}-panel .theme-slots {
+          grid-template-columns:
+            repeat(
+              2,
+              minmax(
+                0,
+                1fr
+              )
+            ) !important;
         }
       }
     `;
@@ -6514,6 +7498,95 @@
         </div>
       </fieldset>
     `;
+  }
+
+  function escapeHtml(
+    value
+  ) {
+    return String(
+      value ?? ''
+    )
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function themeSlotsMarkup() {
+    return Array.from(
+      {
+        length:
+          THEME_SLOT_COUNT,
+      },
+      (_, index) => {
+        const slot =
+          themeSlots[index];
+
+        return `
+          <div
+            class="theme-slot"
+            data-theme-slot="${index}"
+          >
+            <div
+              class="theme-slot-number"
+            >
+              Ячейка ${index + 1}
+            </div>
+
+            <input
+              id="${ID}-theme-slot-name-${index}"
+              type="text"
+              maxlength="48"
+              placeholder="Название темы"
+              value="${escapeHtml(
+                slot?.name || ''
+              )}"
+            >
+
+            <div
+              id="${ID}-theme-slot-status-${index}"
+              class="theme-slot-status"
+            >
+              ${slot
+                ? 'Сохранено'
+                : 'Пусто'}
+            </div>
+
+            <div
+              class="theme-slot-actions"
+            >
+              <button
+                id="${ID}-theme-slot-save-${index}"
+                type="button"
+              >
+                Сохранить
+              </button>
+
+              <button
+                id="${ID}-theme-slot-load-${index}"
+                type="button"
+                ${slot
+                  ? ''
+                  : 'disabled'}
+              >
+                Применить
+              </button>
+
+              <button
+                id="${ID}-theme-slot-clear-${index}"
+                type="button"
+                ${slot
+                  ? ''
+                  : 'disabled'}
+              >
+                Очистить
+              </button>
+            </div>
+          </div>
+        `;
+      }
+    ).join('');
   }
 
   function openPanel() {
@@ -6642,7 +7715,7 @@
 
     panel.innerHTML = `
       <b>
-        Sparx — Своя тема для соцсети «Стрекоза» v1.4.1
+        Sparx — Своя тема для соцсети «Стрекоза» v1.7
       </b>
 
       <div class="master-toggle">
@@ -6655,6 +7728,16 @@
           type="checkbox"
         >
       </div>
+
+      <fieldset>
+        <legend>
+          Сохранённые темы
+        </legend>
+
+        <div class="theme-slots">
+          ${themeSlotsMarkup()}
+        </div>
+      </fieldset>
 
       <fieldset>
         <legend>
@@ -6708,7 +7791,7 @@
             </option>
 
             <option value="custom">
-              Кастомный по ссылке
+              Кастомный
             </option>
           </select>
 
@@ -6757,6 +7840,30 @@
             type="url"
             placeholder="https://example.com/font.woff2"
           >
+
+          <label>
+            Или файл с компьютера:
+          </label>
+
+          <div class="local-file">
+            <input
+              id="${ID}-local-font-file"
+              type="file"
+              accept=".woff,.woff2,.ttf,.otf,font/*"
+            >
+
+            <button
+              id="${ID}-local-font-clear"
+              type="button"
+            >
+              Удалить локальный
+            </button>
+
+            <div
+              id="${ID}-local-font-status"
+              class="local-file-status"
+            ></div>
+          </div>
 
           <label>
             Запасной шрифт:
@@ -6815,6 +7922,30 @@
             id="${ID}-wallpaper"
             type="url"
           >
+
+          <label>
+            Или файл с компьютера:
+          </label>
+
+          <div class="local-file">
+            <input
+              id="${ID}-local-wallpaper-file"
+              type="file"
+              accept="image/*"
+            >
+
+            <button
+              id="${ID}-local-wallpaper-clear"
+              type="button"
+            >
+              Удалить локальные обои
+            </button>
+
+            <div
+              id="${ID}-local-wallpaper-status"
+              class="local-file-status"
+            ></div>
+          </div>
 
           <label>
             Режим:
@@ -6982,170 +8113,565 @@
         `#${ID}-${name}`
       );
 
-    get('enabled').checked =
-      settings.enabled;
-
-    get('font').value =
-      settings.font;
-
-    get('font-scale').value =
-      settings.fontScale;
-
-    get('font-scale-label')
-      .textContent =
-        ` ${settings.fontScale}%`;
-
-    get('text-color-enabled')
-      .checked =
-        settings
-          .textColorEnabled;
-
-    get('text-color')
-      .value =
-        settings.textColor;
-
-    get('custom-font-url')
-      .value =
-        settings.customFontUrl;
-
-    get('custom-font-fallback')
-      .value =
-        settings
-          .customFontFallback;
-
-    get('wallpaper-enabled')
-      .checked =
-        settings
-          .wallpaperEnabled;
-
-    get('wallpaper').value =
-      settings.wallpaper;
-
-    get('mode').value =
-      settings
-        .wallpaperMode;
-
-    get('position').value =
-      settings
-        .wallpaperPosition;
-
-    for (
-      const group
-      of GROUPS
+    function writeSettingsToControls(
+      source
     ) {
-      get(
-        `${group}-enabled`
-      ).checked =
-        settings[
-          `${group}Enabled`
-        ];
+      const values =
+        cloneThemeSettings(
+          source
+        );
 
-      get(
-        `${group}-dark`
-      ).value =
-        settings[
-          `${group}Dark`
-        ];
+      get('enabled').checked =
+        values.enabled;
 
-      get(
-        `${group}-middle`
-      ).value =
-        settings[
-          `${group}Middle`
-        ];
+      get('font').value =
+        values.font;
 
-      get(
-        `${group}-light`
-      ).value =
-        settings[
-          `${group}Light`
-        ];
+      get('font-scale').value =
+        values.fontScale;
+
+      get('font-scale-label')
+        .textContent =
+          ` ${values.fontScale}%`;
+
+      get('text-color-enabled')
+        .checked =
+          values.textColorEnabled;
+
+      get('text-color')
+        .value =
+          values.textColor;
+
+      get('custom-font-url')
+        .value =
+          values.customFontUrl;
+
+      get('custom-font-fallback')
+        .value =
+          values.customFontFallback;
+
+      get('wallpaper-enabled')
+        .checked =
+          values.wallpaperEnabled;
+
+      get('wallpaper').value =
+        values.wallpaper;
+
+      get('mode').value =
+        values.wallpaperMode;
+
+      get('position').value =
+        values.wallpaperPosition;
+
+      for (
+        const group
+        of GROUPS
+      ) {
+        get(
+          `${group}-enabled`
+        ).checked =
+          values[
+            `${group}Enabled`
+          ];
+
+        get(
+          `${group}-dark`
+        ).value =
+          values[
+            `${group}Dark`
+          ];
+
+        get(
+          `${group}-middle`
+        ).value =
+          values[
+            `${group}Middle`
+          ];
+
+        get(
+          `${group}-light`
+        ).value =
+          values[
+            `${group}Light`
+          ];
+      }
+
+      get('blue-transparency')
+        .value =
+          values.blueTransparency;
+
+      get('blue-transparency-label')
+        .textContent =
+          ` ${values.blueTransparency}%`;
+
+      get('blue-aero-enabled')
+        .checked =
+          values.blueAeroEnabled;
+
+      get('blue-blur').value =
+        values.blueBlur;
+
+      get('blue-blur-label')
+        .textContent =
+          ` ${values.blueBlur}px`;
+
+      get('blue-saturation')
+        .value =
+          values.blueSaturation;
+
+      get('blue-saturation-label')
+        .textContent =
+          ` ${values.blueSaturation}%`;
+
+      get('neutral-transparency')
+        .value =
+          values.neutralTransparency;
+
+      get('neutral-transparency-label')
+        .textContent =
+          ` ${values.neutralTransparency}%`;
+
+      get('canvas-transparency')
+        .value =
+          values.canvasTransparency;
+
+      get('canvas-transparency-label')
+        .textContent =
+          ` ${values.canvasTransparency}%`;
+
+      const displayedCornerRadius =
+        Math.max(
+          0,
+          Math.min(
+            8,
+            Number(
+              values.cornerRadius
+            ) || 0
+          )
+        );
+
+      get('rounded-enabled')
+        .checked =
+          values.roundedEnabled;
+
+      get('corner-radius')
+        .value =
+          displayedCornerRadius;
+
+      get('corner-radius-label')
+        .textContent =
+          ` ${displayedCornerRadius}px`;
+
+      get('popup-opaque-enabled')
+        .checked =
+          values.popupOpaqueEnabled;
+
+      get('popup-color')
+        .value =
+          values.popupColor;
     }
 
-    get('blue-transparency')
-      .value =
-        settings
-          .blueTransparency;
-
-    get('blue-transparency-label')
-      .textContent =
-        ` ${settings.blueTransparency}%`;
-
-    get('blue-aero-enabled')
-      .checked =
-        settings
-          .blueAeroEnabled;
-
-    get('blue-blur').value =
-      settings.blueBlur;
-
-    get('blue-blur-label')
-      .textContent =
-        ` ${settings.blueBlur}px`;
-
-    get('blue-saturation')
-      .value =
-        settings
-          .blueSaturation;
-
-    get('blue-saturation-label')
-      .textContent =
-        ` ${settings.blueSaturation}%`;
-
-    get('neutral-transparency')
-      .value =
-        settings
-          .neutralTransparency;
-
-    get('neutral-transparency-label')
-      .textContent =
-        ` ${settings.neutralTransparency}%`;
-
-    get('canvas-transparency')
-      .value =
-        settings
-          .canvasTransparency;
-
-    get('canvas-transparency-label')
-      .textContent =
-        ` ${settings.canvasTransparency}%`;
-
-    get('rounded-enabled')
-      .checked =
-        settings
-          .roundedEnabled;
-
-    const displayedCornerRadius =
-      Math.max(
-        0,
-        Math.min(
-          8,
-          Number(
-            settings.cornerRadius
-          ) || 0
-        )
-      );
-
-    get('corner-radius')
-      .value =
-        displayedCornerRadius;
-
-    get('corner-radius-label')
-      .textContent =
-        ` ${displayedCornerRadius}px`;
-
-    get('popup-opaque-enabled')
-      .checked =
-        settings
-          .popupOpaqueEnabled;
-
-    get('popup-color')
-      .value =
-        settings.popupColor;
+    writeSettingsToControls(
+      settings
+    );
 
     setFontStatus(
       fontCache.status
     );
+
+    function updateLocalFileStatus() {
+      get(
+        'local-font-status'
+      ).textContent =
+        localFontAsset
+          ? `Используется локально: ${localFontAsset.name} (${formatFileSize(localFontAsset.size)})`
+          : 'Локальный шрифт не выбран. При наличии файла он имеет приоритет над ссылкой.';
+
+      get(
+        'local-wallpaper-status'
+      ).textContent =
+        localWallpaperAsset
+          ? `Используются локально: ${localWallpaperAsset.name} (${formatFileSize(localWallpaperAsset.size)})`
+          : 'Локальные обои не выбраны. При наличии файла он имеет приоритет над ссылкой.';
+    }
+
+    updateLocalFileStatus();
+
+    function updateThemeSlotUi(
+      index
+    ) {
+      const slot =
+        themeSlots[index];
+
+      const nameInput =
+        get(
+          `theme-slot-name-${index}`
+        );
+
+      const status =
+        get(
+          `theme-slot-status-${index}`
+        );
+
+      const loadButton =
+        get(
+          `theme-slot-load-${index}`
+        );
+
+      const clearButton =
+        get(
+          `theme-slot-clear-${index}`
+        );
+
+      if (!slot) {
+        status.textContent =
+          'Пусто';
+
+        loadButton.disabled =
+          true;
+
+        clearButton.disabled =
+          true;
+
+        return;
+      }
+
+      nameInput.value =
+        slot.name ||
+        `Тема ${index + 1}`;
+
+      const hasWallpaper =
+        Boolean(
+          readStoredAsset(
+            themeSlotAssetKey(
+              'wallpaper',
+              index
+            )
+          )
+        );
+
+      const hasFont =
+        Boolean(
+          readStoredAsset(
+            themeSlotAssetKey(
+              'font',
+              index
+            )
+          )
+        );
+
+      const extras = [];
+
+      if (hasWallpaper) {
+        extras.push(
+          'локальные обои'
+        );
+      }
+
+      if (hasFont) {
+        extras.push(
+          'локальный шрифт'
+        );
+      }
+
+      status.textContent =
+        extras.length
+          ? `Сохранено • ${extras.join(' • ')}`
+          : 'Сохранено';
+
+      loadButton.disabled =
+        false;
+
+      clearButton.disabled =
+        false;
+    }
+
+    for (
+      let index = 0;
+      index < THEME_SLOT_COUNT;
+      index += 1
+    ) {
+      const nameInput =
+        get(
+          `theme-slot-name-${index}`
+        );
+
+      get(
+        `theme-slot-save-${index}`
+      ).onclick =
+        () => {
+          settings =
+            readSettings();
+
+          const name =
+            nameInput.value
+              .trim() ||
+            `Тема ${index + 1}`;
+
+          themeSlots[index] = {
+            name:
+              name.slice(
+                0,
+                48
+              ),
+
+            settings:
+              cloneThemeSettings(
+                settings
+              ),
+
+            savedAt:
+              Date.now(),
+          };
+
+          try {
+            saveCurrentAssetsToThemeSlot(
+              index
+            );
+
+            saveThemeSlots();
+
+            GM_setValue(
+              KEY,
+              settings
+            );
+          } catch (error) {
+            console.error(
+              '[Sparx] Не удалось сохранить ячейку темы:',
+              error
+            );
+
+            window.alert(
+              'Не удалось сохранить тему в эту ячейку. Если в ней используются очень большие локальные файлы, попробуй уменьшить их размер.'
+            );
+
+            return;
+          }
+
+          updateThemeSlotUi(
+            index
+          );
+
+          void rebuild();
+        };
+
+      get(
+        `theme-slot-load-${index}`
+      ).onclick =
+        () => {
+          const slot =
+            themeSlots[index];
+
+          if (!slot) {
+            return;
+          }
+
+          settings =
+            cloneThemeSettings(
+              slot.settings
+            );
+
+          try {
+            applyThemeSlotAssets(
+              index
+            );
+
+            GM_setValue(
+              KEY,
+              settings
+            );
+          } catch (error) {
+            console.error(
+              '[Sparx] Не удалось применить ячейку темы:',
+              error
+            );
+
+            window.alert(
+              'Не удалось загрузить сохранённую тему.'
+            );
+
+            return;
+          }
+
+          writeSettingsToControls(
+            settings
+          );
+
+          updateLocalFileStatus();
+
+          void rebuild();
+        };
+
+      get(
+        `theme-slot-clear-${index}`
+      ).onclick =
+        () => {
+          const slot =
+            themeSlots[index];
+
+          if (!slot) {
+            return;
+          }
+
+          if (
+            !window.confirm(
+              `Очистить ячейку «${slot.name || `Тема ${index + 1}`}»?`
+            )
+          ) {
+            return;
+          }
+
+          clearThemeSlot(
+            index
+          );
+
+          nameInput.value = '';
+
+          updateThemeSlotUi(
+            index
+          );
+        };
+
+      nameInput.onchange =
+        () => {
+          const slot =
+            themeSlots[index];
+
+          if (!slot) {
+            return;
+          }
+
+          const nextName =
+            nameInput.value
+              .trim() ||
+            `Тема ${index + 1}`;
+
+          slot.name =
+            nextName.slice(
+              0,
+              48
+            );
+
+          saveThemeSlots();
+
+          updateThemeSlotUi(
+            index
+          );
+        };
+    }
+
+    get(
+      'local-font-file'
+    ).onchange =
+      async () => {
+        const file =
+          get(
+            'local-font-file'
+          ).files?.[0];
+
+        if (!file) {
+          return;
+        }
+
+        const ok =
+          await storeLocalAsset(
+            'font',
+            file
+          );
+
+        get(
+          'local-font-file'
+        ).value = '';
+
+        if (ok) {
+          get('font').value =
+            'custom';
+
+          settings =
+            readSettings();
+
+          GM_setValue(
+            KEY,
+            settings
+          );
+
+          updateLocalFileStatus();
+          void rebuild();
+        }
+      };
+
+    get(
+      'local-font-clear'
+    ).onclick =
+      () => {
+        clearLocalAsset(
+          'font'
+        );
+
+        updateLocalFileStatus();
+
+        settings =
+          readSettings();
+
+        void rebuild();
+      };
+
+    get(
+      'local-wallpaper-file'
+    ).onchange =
+      async () => {
+        const file =
+          get(
+            'local-wallpaper-file'
+          ).files?.[0];
+
+        if (!file) {
+          return;
+        }
+
+        const ok =
+          await storeLocalAsset(
+            'wallpaper',
+            file
+          );
+
+        get(
+          'local-wallpaper-file'
+        ).value = '';
+
+        if (ok) {
+          get(
+            'wallpaper-enabled'
+          ).checked = true;
+
+          settings =
+            readSettings();
+
+          GM_setValue(
+            KEY,
+            settings
+          );
+
+          updateLocalFileStatus();
+          void rebuild();
+        }
+      };
+
+    get(
+      'local-wallpaper-clear'
+    ).onclick =
+      () => {
+        clearLocalAsset(
+          'wallpaper'
+        );
+
+        updateLocalFileStatus();
+
+        settings =
+          readSettings();
+
+        void rebuild();
+      };
 
     const sliders = [
       [
@@ -7392,7 +8918,7 @@
       () => {
         if (
           !window.confirm(
-            'Сбросить все настройки Sparx?'
+            'Сбросить текущую тему Sparx и локальные файлы? Сохранённые ячейки тем останутся.'
           )
         ) {
           return;
@@ -7404,6 +8930,14 @@
 
         GM_deleteValue(
           OLD_POPUP_KEY
+        );
+
+        clearLocalAsset(
+          'wallpaper'
+        );
+
+        clearLocalAsset(
+          'font'
         );
 
         for (
@@ -7486,6 +9020,7 @@
                   ) {
                     return ![
                       `${ID}-theme`,
+                      `${ID}-effects`,
                       `${ID}-ui`,
                     ].includes(
                       node.id
@@ -7532,56 +9067,126 @@
     );
 
     /*
-     * Новые записи и панели получают классы
-     * через лёгкое обновление DOM. Полная
-     * пересборка CSS здесь запрещена: она
-     * удаляла и заново добавляла @font-face
-     * во время ввода и вызывала дёргание окна.
+     * Динамический DOM обрабатывается точечно: вместо
+     * полного сканирования всей страницы на каждый пост
+     * очередь хранит только реально изменившиеся ветки.
      */
     new MutationObserver(
       (mutations) => {
-        const relevant =
-          mutations.filter(
-            (mutation) =>
-              [
-                ...mutation
-                  .addedNodes,
+        const roots = [];
 
-                ...mutation
-                  .removedNodes,
-              ].some(
-                (node) =>
-                  node instanceof
-                    HTMLElement &&
-                  node.id !==
-                    WALLPAPER_LAYER_ID &&
-                  !node.classList?.contains(
-                    INTEGRATED.glassLayer
-                  )
+        for (
+          const mutation
+          of mutations
+        ) {
+          if (
+            mutation.type ===
+              'attributes'
+          ) {
+            const target =
+              mutation.target;
+
+            if (
+              !(
+                target instanceof
+                HTMLElement
+              ) ||
+              target.closest(
+                `#${ID}-panel`
               )
-          );
+            ) {
+              continue;
+            }
 
-        if (!relevant.length) {
-          return;
+            if (
+              mutation.attributeName ===
+                'class'
+            ) {
+              const clean =
+                (value) =>
+                  String(value || '')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .filter(
+                      (name) =>
+                        !name.startsWith(
+                          `${ID}-`
+                        )
+                    )
+                    .sort()
+                    .join(' ');
+
+              if (
+                clean(
+                  mutation.oldValue
+                ) ===
+                clean(
+                  target.className
+                )
+              ) {
+                continue;
+              }
+            }
+
+            roots.push(target);
+            continue;
+          }
+
+          if (
+            mutation.type ===
+              'characterData'
+          ) {
+            if (
+              mutation.target
+                .parentElement
+            ) {
+              roots.push(
+                mutation.target
+                  .parentElement
+              );
+            }
+
+            continue;
+          }
+
+          const added =
+            [...mutation.addedNodes];
+
+          for (
+            const node
+            of added
+          ) {
+            if (
+              node instanceof
+                HTMLElement
+            ) {
+              roots.push(node);
+            } else if (
+              node.nodeType ===
+                Node.TEXT_NODE &&
+              mutation.target instanceof
+                HTMLElement
+            ) {
+              roots.push(
+                mutation.target
+              );
+            }
+          }
+
+          if (
+            mutation.target instanceof
+              HTMLElement &&
+            mutation.target !==
+              document.body &&
+            added.length
+          ) {
+            roots.push(
+              mutation.target
+            );
+          }
         }
 
-        const editorMutation =
-          relevant.some(
-            mutationTouchesEditor
-          );
-
-        /*
-         * Сайт может перерисовывать редактор
-         * после каждой буквы. Пока идёт ввод,
-         * такие мутации полностью игнорируются.
-         */
-        if (
-          editorMutation ||
-          userIsEditing()
-        ) {
-          noteTyping(
-            900
-          );
+        if (!roots.length) {
           return;
         }
 
@@ -7590,18 +9195,23 @@
         );
 
         scheduleDynamicRefresh(
-          80
+          70,
+          roots
         );
       }
     ).observe(
       document.body,
 
       {
-        childList:
-          true,
-
-        subtree:
-          true,
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeOldValue: true,
+        attributeFilter: [
+          'class',
+          'hidden',
+        ],
       }
     );
 
@@ -7694,7 +9304,9 @@
             80;
 
           scheduleDynamicRefresh(
-            120
+            120,
+            null,
+            true
           );
 
           scheduleIntegratedApply(
@@ -7725,28 +9337,14 @@
     );
 
     /*
-     * Бесконечная лента иногда вставляет записи
-     * пакетно и без отдельного события навигации.
-     * Отложенный проход после скролла подхватывает
-     * пропущенные карточки, текст и скругления.
+     * Скролл больше не запускает полный перескан: новые
+     * записи ловятся MutationObserver-ом по изменённой ветке.
      */
-    window.addEventListener(
-      'scroll',
-
-      () =>
-        scheduleDynamicRefresh(
-          180
-        ),
-
-      {
-        passive: true,
-      }
-    );
 
     let observedLocation =
       location.href;
 
-    window.setInterval(
+    const handleNavigation =
       () => {
         if (
           location.href ===
@@ -7763,12 +9361,42 @@
         );
 
         scheduleDynamicRefresh(
-          220
+          220,
+          null,
+          true
         );
-      },
+      };
 
-      500
-    );
+    for (
+      const method
+      of [
+        'pushState',
+        'replaceState',
+      ]
+    ) {
+      const original =
+        history[method];
+
+      if (
+        typeof original ===
+        'function'
+      ) {
+        history[method] =
+          function (...args) {
+            const result =
+              original.apply(
+                this,
+                args
+              );
+
+            queueMicrotask(
+              handleNavigation
+            );
+
+            return result;
+          };
+      }
+    }
 
     for (
       const eventName
@@ -7780,43 +9408,17 @@
     ) {
       window.addEventListener(
         eventName,
-
-        () => {
-          scheduleSafeRebuild(
-            120
-          );
-
-          scheduleDynamicRefresh(
-            220
-          );
-        }
+        handleNavigation
       );
     }
 
     document.addEventListener(
       'click',
 
-      () => {
-        for (
-          const delay
-          of [
-            0,
-            40,
-            140,
-            360,
-          ]
-        ) {
-          window.setTimeout(
-            () => {
-              applyIntegratedFixes();
-              scheduleDynamicRefresh(
-                40
-              );
-            },
-            delay
-          );
-        }
-      },
+      () =>
+        scheduleIntegratedApply(
+          90
+        ),
 
       true
     );
@@ -7845,6 +9447,14 @@
           OLD_POPUP_KEY
         );
 
+        clearLocalAsset(
+          'wallpaper'
+        );
+
+        clearLocalAsset(
+          'font'
+        );
+
         for (
           const oldKey
           of OLD_KEYS
@@ -7857,6 +9467,22 @@
         location.reload();
       }
     );
+
+    document
+      .querySelectorAll(
+        'link[rel="stylesheet"]'
+      )
+      .forEach(
+        (link) =>
+          link.addEventListener(
+            'load',
+            () =>
+              scheduleSafeRebuild(
+                60
+              ),
+            { once: true }
+          )
+      );
 
     setTimeout(
       () =>
@@ -7874,11 +9500,28 @@
 
     setTimeout(
       () =>
-        void rebuild(),
+        scheduleDynamicRefresh(
+          0,
+          null,
+          true
+        ),
 
       1300
     );
   }
+
+  window.addEventListener(
+    'beforeunload',
+    () => {
+      revokeLocalAssetUrl(
+        'wallpaper'
+      );
+
+      revokeLocalAssetUrl(
+        'font'
+      );
+    }
+  );
 
   start();
 })();
