@@ -1,15 +1,17 @@
 // ==UserScript==
 // @name         Sparx - Своя тема для соцсети "Стрекоза"
 // @namespace    dragonfly-custom-css
-// @version      1.5
-// @description  Приветствуйте Sparx, кастомный скрипт, который позволяет настраивать тему Стрекозы под себя. Он позволяет настраивать свой фон, ввиде ссылки на изображение, менять цвет и прозрачность, менять шрифты и его цвет из предложенных, а также встраивать свой собственный ввиде ссылки на него, а также делать углы менее острыми. Короче, сделаю свою Стрекозу максимально своей.
-// @author       DazzleThePriest aka TheDoctorCrow (https://dragonfly-flash.com/?id=DazzleThePriest)
+// @version      1.6.12
+// @description  Sparx — настройщик темы Стрекозы. 1.6.12.
+// @author       Dazzle_TheShadowPriest (https://dragonfly-flash.com/?id=Dazzle_TheShadowPriest)
 // @homepageURL  https://github.com/DazzleTheShadowPriest/Sparx
 // @supportURL   https://github.com/DazzleTheShadowPriest/Sparx/issues
-// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
-// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js
+// @updateURL    https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/main/Sparx.user.js
+// @downloadURL  https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/main/Sparx.user.js
 // @match        https://dragonfly-flash.com/*
 // @match        http://dragonfly-flash.com/*
+// @match        https://www.dragonfly-flash.com/*
+// @match        http://www.dragonfly-flash.com/*
 // @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
@@ -29,16 +31,27 @@
     'df-theme-v56-local-wallpaper';
   const LOCAL_FONT_KEY =
     'df-theme-v56-local-font';
+  const LOCAL_BANNER_KEY =
+    'df-theme-v56-local-banner';
   const THEME_SLOTS_KEY =
     'df-theme-v56-theme-slots';
   const THEME_SLOT_COUNT = 5;
   const THEME_SLOT_WALLPAPER_PREFIX =
     'df-theme-v56-slot-wallpaper-';
+  const THEME_SLOT_BANNER_PREFIX =
+    'df-theme-v56-slot-banner-';
   const THEME_SLOT_FONT_PREFIX =
     'df-theme-v56-slot-font-';
+  const THEME_SHARE_FORMAT =
+    'sparx-theme';
+  const THEME_SHARE_VERSION = 1;
+  const THEME_SHARE_CODE_PREFIX =
+    'SPARX1:';
   const OLD_POPUP_KEY = 'df-v56-popup-opaque-settings';
   const WALLPAPER_LAYER_ID =
     `${ID}-wallpaper-layer`;
+  const FONT_STYLE_ID =
+    `${ID}-font`;
 
   const NEUTRAL_FALLBACK_VAR =
     `--${ID}-neutral-fallback-color`;
@@ -67,6 +80,18 @@
       'https://files.catbox.moe/qq0th0.png',
     wallpaperMode: 'cover',
     wallpaperPosition: 'center center',
+
+    bannerEnabled: false,
+    banner: '',
+    bannerMode: 'cover',
+    bannerPosition: 'center center',
+
+    viewerEnabled: false,
+    viewerDark: '#0b46b8',
+    viewerMiddle: '#4f8de0',
+    viewerLight: '#dce8fb',
+    viewerCanvas: '#f4f4f4',
+    viewerText: '#000000',
 
     blueEnabled: false,
     blueDark: '#0000ff',
@@ -114,6 +139,7 @@
 
     popupOpaqueEnabled: false,
     popupColor: '#ece9d8',
+
   };
 
   const FONTS = {
@@ -184,11 +210,6 @@
     ),
   };
 
-  /*
-   * В Sparx 1.0 радиус намеренно ограничен 8px.
-   * Это также нормализует старые сохранённые
-   * значения из предыдущих версий скрипта.
-   */
   settings.cornerRadius =
     Math.max(
       0,
@@ -200,6 +221,8 @@
       )
     );
 
+  let fontStyle;
+  let lastFontCss = '';
   let themeStyle;
   let effectsStyle;
   let uiStyle;
@@ -207,6 +230,8 @@
   let dynamicRefreshTimer;
   let dynamicFullRefresh = false;
   const dynamicRoots = new Set();
+  let settledRefreshTimer = 0;
+  let settledRefreshLateTimer = 0;
   let generation = 0;
   let integratedTimer;
   let integratedApplying = false;
@@ -220,11 +245,6 @@
   const popupTouched =
     new Set();
 
-  /*
-   * Исходные inline-свойства текста сохраняются,
-   * чтобы выключение настройки полностью возвращало
-   * оформление сайта без перезагрузки.
-   */
   const textInlineState =
     new WeakMap();
 
@@ -248,6 +268,9 @@
 
   const LOCAL_FILE_LIMITS = {
     wallpaper:
+      24 * 1024 * 1024,
+
+    banner:
       24 * 1024 * 1024,
 
     font:
@@ -287,7 +310,6 @@
         return asset;
       }
     } catch {
-      // Повреждённое старое значение игнорируется.
     }
 
     return null;
@@ -303,27 +325,43 @@
       LOCAL_FONT_KEY
     );
 
+  let localBannerAsset =
+    readStoredAsset(
+      LOCAL_BANNER_KEY
+    );
+
   const localAssetUrls = {
     wallpaper: '',
+    banner: '',
     font: '',
   };
 
   function assetFor(
     kind
   ) {
-    return kind ===
-      'wallpaper'
-      ? localWallpaperAsset
-      : localFontAsset;
+    if (kind === 'wallpaper') {
+      return localWallpaperAsset;
+    }
+
+    if (kind === 'banner') {
+      return localBannerAsset;
+    }
+
+    return localFontAsset;
   }
 
   function assetKeyFor(
     kind
   ) {
-    return kind ===
-      'wallpaper'
-      ? LOCAL_WALLPAPER_KEY
-      : LOCAL_FONT_KEY;
+    if (kind === 'wallpaper') {
+      return LOCAL_WALLPAPER_KEY;
+    }
+
+    if (kind === 'banner') {
+      return LOCAL_BANNER_KEY;
+    }
+
+    return LOCAL_FONT_KEY;
   }
 
   function revokeLocalAssetUrl(
@@ -446,11 +484,6 @@
 
       return localAssetUrls[kind];
     } catch {
-      /*
-       * Старые Safari/WebKit могут не разрешить
-       * blob:-URL из sandbox userscript. Data URL
-       * остаётся полностью локальным запасным путём.
-       */
       return asset.dataUrl;
     }
   }
@@ -462,6 +495,18 @@
       ) ||
       String(
         settings.wallpaper ||
+        ''
+      ).trim()
+    );
+  }
+
+  function currentBannerSource() {
+    return (
+      localAssetObjectUrl(
+        'banner'
+      ) ||
+      String(
+        settings.banner ||
         ''
       ).trim()
     );
@@ -551,7 +596,9 @@
       window.alert(
         kind === 'wallpaper'
           ? 'Файл обоев слишком большой. Максимум — 24 МБ.'
-          : 'Файл шрифта слишком большой. Максимум — 12 МБ.'
+          : kind === 'banner'
+            ? 'Файл баннера слишком большой. Максимум — 24 МБ.'
+            : 'Файл шрифта слишком большой. Максимум — 12 МБ.'
       );
 
       return false;
@@ -617,6 +664,9 @@
     if (kind === 'wallpaper') {
       localWallpaperAsset =
         asset;
+    } else if (kind === 'banner') {
+      localBannerAsset =
+        asset;
     } else {
       localFontAsset =
         asset;
@@ -639,42 +689,64 @@
     if (kind === 'wallpaper') {
       localWallpaperAsset =
         null;
+    } else if (kind === 'banner') {
+      localBannerAsset =
+        null;
     } else {
       localFontAsset =
         null;
     }
   }
 
+  function writeStoredAsset(
+    key,
+    asset
+  ) {
+    if (
+      asset &&
+      typeof asset === 'object' &&
+      typeof asset.dataUrl === 'string' &&
+      asset.dataUrl.startsWith('data:')
+    ) {
+      GM_setValue(
+        key,
+        JSON.stringify(asset)
+      );
+    } else {
+      GM_deleteValue(key);
+    }
+  }
+
   function cloneThemeSettings(
     source
   ) {
-    let copy = {};
+    const safe = {};
 
-    try {
-      copy = JSON.parse(
-        JSON.stringify(
-          source || {}
-        )
-      );
-    } catch {
-      copy = {};
+    if (source && typeof source === 'object') {
+      for (const key of Object.keys(DEFAULTS)) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          safe[key] = source[key];
+        }
+      }
     }
 
     const next = {
       ...DEFAULTS,
-      ...copy,
+      ...safe,
     };
 
-    next.cornerRadius =
-      Math.max(
-        0,
-        Math.min(
-          8,
-          Number(
-            next.cornerRadius
-          ) || 0
-        )
-      );
+    next.cornerRadius = Math.max(
+      0,
+      Math.min(8, Number(next.cornerRadius) || 0)
+    );
+
+    for (const key of [
+      'blueTransparency',
+      'neutralTransparency',
+      'canvasTransparency',
+    ]) {
+      next[key] = Math.max(0, Math.min(100, Number(next[key]) || 0));
+    }
 
     return next;
   }
@@ -761,36 +833,14 @@
     kind,
     index
   ) {
-    return `${
+    const prefix =
       kind === 'wallpaper'
         ? THEME_SLOT_WALLPAPER_PREFIX
-        : THEME_SLOT_FONT_PREFIX
-    }${index}`;
-  }
+        : kind === 'banner'
+          ? THEME_SLOT_BANNER_PREFIX
+          : THEME_SLOT_FONT_PREFIX;
 
-  function writeStoredAsset(
-    key,
-    asset
-  ) {
-    if (
-      asset &&
-      typeof asset.dataUrl ===
-        'string' &&
-      asset.dataUrl.startsWith(
-        'data:'
-      )
-    ) {
-      GM_setValue(
-        key,
-        JSON.stringify(
-          asset
-        )
-      );
-    } else {
-      GM_deleteValue(
-        key
-      );
-    }
+    return `${prefix}${index}`;
   }
 
   function saveCurrentAssetsToThemeSlot(
@@ -802,6 +852,14 @@
         index
       ),
       localWallpaperAsset
+    );
+
+    writeStoredAsset(
+      themeSlotAssetKey(
+        'banner',
+        index
+      ),
+      localBannerAsset
     );
 
     writeStoredAsset(
@@ -821,6 +879,10 @@
     );
 
     revokeLocalAssetUrl(
+      'banner'
+    );
+
+    revokeLocalAssetUrl(
       'font'
     );
 
@@ -828,6 +890,14 @@
       readStoredAsset(
         themeSlotAssetKey(
           'wallpaper',
+          index
+        )
+      );
+
+    localBannerAsset =
+      readStoredAsset(
+        themeSlotAssetKey(
+          'banner',
           index
         )
       );
@@ -843,6 +913,11 @@
     writeStoredAsset(
       LOCAL_WALLPAPER_KEY,
       localWallpaperAsset
+    );
+
+    writeStoredAsset(
+      LOCAL_BANNER_KEY,
+      localBannerAsset
     );
 
     writeStoredAsset(
@@ -870,10 +945,279 @@
 
     GM_deleteValue(
       themeSlotAssetKey(
+        'banner',
+        index
+      )
+    );
+
+    GM_deleteValue(
+      themeSlotAssetKey(
         'font',
         index
       )
     );
+  }
+
+  function sharedAsset(
+    asset,
+    kind
+  ) {
+    if (!asset) {
+      return null;
+    }
+
+    if (
+      typeof asset !== 'object' ||
+      typeof asset.dataUrl !== 'string' ||
+      !asset.dataUrl.startsWith('data:')
+    ) {
+      throw new Error('Некорректный локальный файл в теме.');
+    }
+
+    const limit = LOCAL_FILE_LIMITS[kind] || 0;
+    const maximumDataUrlLength = Math.ceil(limit * 4 / 3) + 8192;
+
+    if (limit && asset.dataUrl.length > maximumDataUrlLength) {
+      throw new Error(
+        kind === 'font'
+          ? 'Шрифт внутри темы превышает лимит Sparx.'
+          : kind === 'banner'
+            ? 'Баннер внутри темы превышает лимит Sparx.'
+            : 'Обои внутри темы превышают лимит Sparx.'
+      );
+    }
+
+    if (
+      (kind === 'wallpaper' || kind === 'banner') &&
+      !/^data:image\//i.test(asset.dataUrl)
+    ) {
+      throw new Error(
+        kind === 'banner'
+          ? 'В теме находится неподдерживаемый файл баннера.'
+          : 'В теме находится неподдерживаемый файл обоев.'
+      );
+    }
+
+    if (
+      kind === 'font' &&
+      !/^data:(?:font\/|application\/(?:octet-stream|font|x-font-))/i.test(
+        asset.dataUrl
+      )
+    ) {
+      throw new Error('В теме находится неподдерживаемый файл шрифта.');
+    }
+
+    return {
+      name: String(
+        asset.name ||
+        (kind === 'font' ? 'font' : kind === 'banner' ? 'banner' : 'wallpaper')
+      ).slice(0, 160),
+      type: String(asset.type || 'application/octet-stream').slice(0, 100),
+      size: Math.max(0, Number(asset.size) || 0),
+      dataUrl: asset.dataUrl,
+    };
+  }
+
+  function safeThemeFilename(
+    name
+  ) {
+    return (
+      String(name || 'Sparx-theme')
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) ||
+      'Sparx-theme'
+    );
+  }
+
+  function buildSharedTheme(
+    sourceSettings = settings,
+    includeAssets = true,
+    name = 'Sparx theme'
+  ) {
+    const payload = {
+      format: THEME_SHARE_FORMAT,
+      formatVersion: THEME_SHARE_VERSION,
+      sparxVersion: '1.6.12',
+      name: String(name || 'Sparx theme').slice(0, 80),
+      settings: cloneThemeSettings(sourceSettings),
+      exportedAt: new Date().toISOString(),
+    };
+
+    if (includeAssets) {
+      payload.assets = {
+        wallpaper: sharedAsset(localWallpaperAsset, 'wallpaper'),
+        banner: sharedAsset(localBannerAsset, 'banner'),
+        font: sharedAsset(localFontAsset, 'font'),
+      };
+    }
+
+    return payload;
+  }
+
+  function parseSharedTheme(
+    input
+  ) {
+    const payload =
+      typeof input === 'string'
+        ? JSON.parse(input)
+        : input;
+
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      payload.format !== THEME_SHARE_FORMAT ||
+      Number(payload.formatVersion) !== THEME_SHARE_VERSION ||
+      !payload.settings ||
+      typeof payload.settings !== 'object'
+    ) {
+      throw new Error('Это не поддерживаемая тема Sparx.');
+    }
+
+    const assets =
+      payload.assets && typeof payload.assets === 'object'
+        ? payload.assets
+        : {};
+
+    return {
+      name: String(payload.name || 'Импортированная тема').slice(0, 80),
+      settings: cloneThemeSettings(payload.settings),
+      assets: {
+        wallpaper: sharedAsset(assets.wallpaper, 'wallpaper'),
+        banner: sharedAsset(assets.banner, 'banner'),
+        font: sharedAsset(assets.font, 'font'),
+      },
+    };
+  }
+
+  function applyImportedTheme(
+    payload,
+    hasAssets = true
+  ) {
+    const imported = parseSharedTheme(payload);
+
+    settings = imported.settings;
+    GM_setValue(KEY, settings);
+
+    revokeLocalAssetUrl('wallpaper');
+    revokeLocalAssetUrl('banner');
+    revokeLocalAssetUrl('font');
+
+    localWallpaperAsset = hasAssets ? imported.assets.wallpaper : null;
+    localBannerAsset = hasAssets ? imported.assets.banner : null;
+    localFontAsset = hasAssets ? imported.assets.font : null;
+
+    writeStoredAsset(LOCAL_WALLPAPER_KEY, localWallpaperAsset);
+    writeStoredAsset(LOCAL_BANNER_KEY, localBannerAsset);
+    writeStoredAsset(LOCAL_FONT_KEY, localFontAsset);
+
+    clearFontCache();
+    return imported;
+  }
+
+  function downloadSharedTheme(
+    sourceSettings,
+    name
+  ) {
+    const payload = buildSharedTheme(sourceSettings, true, name);
+    const blob = new Blob(
+      [JSON.stringify(payload)],
+      { type: 'application/json;charset=utf-8' }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeThemeFilename(payload.name)}.sparx`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function utf8ToBase64(
+    value
+  ) {
+    const bytes = new TextEncoder().encode(String(value));
+    let binary = '';
+
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(
+        ...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length))
+      );
+    }
+
+    return btoa(binary);
+  }
+
+  function base64ToUtf8(
+    value
+  ) {
+    const binary = atob(String(value));
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+
+    return new TextDecoder().decode(bytes);
+  }
+
+  function currentThemeShareCode(
+    sourceSettings,
+    name
+  ) {
+    return (
+      THEME_SHARE_CODE_PREFIX +
+      utf8ToBase64(
+        JSON.stringify(
+          buildSharedTheme(sourceSettings, false, name)
+        )
+      )
+    );
+  }
+
+  function parseThemeShareCode(
+    code
+  ) {
+    const clean = String(code || '').trim();
+
+    if (!clean.startsWith(THEME_SHARE_CODE_PREFIX)) {
+      throw new Error('Код темы должен начинаться с SPARX1:.');
+    }
+
+    return JSON.parse(
+      base64ToUtf8(clean.slice(THEME_SHARE_CODE_PREFIX.length))
+    );
+  }
+
+  async function copyText(
+    value
+  ) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {
+    }
+
+    const area = document.createElement('textarea');
+    area.value = value;
+    area.style.position = 'fixed';
+    area.style.left = '-99999px';
+    document.body.append(area);
+    area.select();
+
+    let copied = false;
+    try {
+      copied = document.execCommand('copy');
+    } catch {
+      copied = false;
+    }
+
+    area.remove();
+    return copied;
   }
 
   const probe =
@@ -927,7 +1271,6 @@
       `${ID}-neutral-image`,
   };
 
-
   const INTEGRATED = {
     glassRoot:
       `${ID}-glass-root`,
@@ -968,9 +1311,41 @@
     popupNotice:
       `${ID}-popup-notice`,
 
+    popupRadio:
+      `${ID}-popup-radio`,
+
     popupOpen:
       `${ID}-popup-open`,
   };
+
+  const NATIVE = {
+    root: `${ID}-native-zone`,
+    viewer: `${ID}-native-viewer`,
+    viewerShell: `${ID}-native-viewer-shell`,
+    control: `${ID}-native-window-control`,
+    banner: `${ID}-profile-banner`,
+    bannerHost: `${ID}-profile-banner-host`,
+    bannerNative: `${ID}-profile-banner-native`,
+    avatarFrame: `${ID}-native-avatar-frame`,
+    viewerBlueStrong: `${ID}-native-viewer-blue-strong`,
+    viewerBlueSoft: `${ID}-native-viewer-blue-soft`,
+    viewerNeutral: `${ID}-native-viewer-neutral`,
+    viewerCanvas: `${ID}-native-viewer-canvas`,
+    viewerControlSurface: `${ID}-native-viewer-control-surface`,
+  };
+
+  function isNativeZone(
+    element
+  ) {
+    return Boolean(
+      element instanceof Element &&
+      (
+        element.closest(`.${NATIVE.root}`) ||
+        element.closest(`.${NATIVE.avatarFrame}`) ||
+        element.classList.contains(NATIVE.banner)
+      )
+    );
+  }
 
   const clamp = (
     value,
@@ -1430,11 +1805,6 @@
       name ===
         'background-image' ||
 
-      /*
-       * Важное исправление:
-       * фон сайта местами хранится
-       * в CSS-переменных.
-       */
       name.startsWith('--')
     );
   }
@@ -1945,6 +2315,127 @@
     );
   }
 
+  function splitSelectorList(
+    selectorText
+  ) {
+    const result = [];
+    let part = '';
+    let round = 0;
+    let square = 0;
+    let quote = '';
+    let escaped = false;
+
+    for (const character of String(selectorText || '')) {
+      if (escaped) {
+        part += character;
+        escaped = false;
+        continue;
+      }
+
+      if (character === '\\') {
+        part += character;
+        escaped = true;
+        continue;
+      }
+
+      if (quote) {
+        part += character;
+        if (character === quote) quote = '';
+        continue;
+      }
+
+      if (character === '"' || character === "'") {
+        quote = character;
+        part += character;
+        continue;
+      }
+
+      if (character === '(') round += 1;
+      if (character === ')') round = Math.max(0, round - 1);
+      if (character === '[') square += 1;
+      if (character === ']') square = Math.max(0, square - 1);
+
+      if (character === ',' && round === 0 && square === 0) {
+        result.push(part.trim());
+        part = '';
+      } else {
+        part += character;
+      }
+    }
+
+    if (part.trim()) result.push(part.trim());
+    return result;
+  }
+
+  function topLevelPseudoElementIndex(
+    selector
+  ) {
+    let round = 0;
+    let square = 0;
+    let quote = '';
+    let escaped = false;
+
+    for (let index = 0; index < selector.length - 1; index += 1) {
+      const character = selector[index];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (character === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (quote) {
+        if (character === quote) quote = '';
+        continue;
+      }
+
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+
+      if (character === '(') round += 1;
+      else if (character === ')') round = Math.max(0, round - 1);
+      else if (character === '[') square += 1;
+      else if (character === ']') square = Math.max(0, square - 1);
+      else if (
+        character === ':' &&
+        selector[index + 1] === ':' &&
+        round === 0 &&
+        square === 0
+      ) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function protectSelectorText(
+    selectorText
+  ) {
+    const guard =
+      `:not(.${NATIVE.root}):not(.${NATIVE.root} *):not(.${NATIVE.banner})`;
+
+    return splitSelectorList(selectorText)
+      .map((selector) => {
+        if (!selector || selector.includes(`.${NATIVE.root}`)) {
+          return selector;
+        }
+
+        const pseudoIndex = topLevelPseudoElementIndex(selector);
+
+        return pseudoIndex >= 0
+          ? `${selector.slice(0, pseudoIndex)}${guard}${selector.slice(pseudoIndex)}`
+          : `${selector}${guard}`;
+      })
+      .join(', ');
+  }
+
   function serializeRules(
     rules,
     baseUrl,
@@ -1973,7 +2464,7 @@
 
         if (body) {
           output +=
-            `${rule.selectorText}` +
+            `${protectSelectorText(rule.selectorText)}` +
             `{${body}}\n`;
         }
 
@@ -2034,7 +2525,6 @@
               statistics
             );
         } catch {
-          // Недоступный импорт.
         }
 
         continue;
@@ -2149,12 +2639,6 @@
         'true'
       );
 
-      /*
-       * Слой находится внутри body,
-       * но фиксирован относительно окна.
-       * Поэтому он не заканчивается вместе
-       * с короткой оболочкой страницы.
-       */
       document.body.prepend(
         layer
       );
@@ -2208,12 +2692,6 @@
       modes.cover;
 
     return `
-      /*
-       * html остаётся страховочным чёрным
-       * холстом, а body становится прозрачным.
-       * Само изображение рисуется отдельным
-       * фиксированным слоем на весь viewport.
-       */
       html {
         min-height:
           100% !important;
@@ -2536,6 +3014,34 @@
     return fontCache.promise;
   }
 
+  function syncFontStyle(
+    css = ''
+  ) {
+    if (!fontStyle) {
+      fontStyle =
+        document.createElement(
+          'style'
+        );
+
+      fontStyle.id =
+        FONT_STYLE_ID;
+
+      document
+        .documentElement
+        .append(
+          fontStyle
+        );
+    }
+
+    const next =
+      String(css || '');
+
+    if (next !== lastFontCss) {
+      fontStyle.textContent = next;
+      lastFontCss = next;
+    }
+  }
+
   function fontCss(
     source = ''
   ) {
@@ -2596,15 +3102,38 @@
     if (stack) {
       css += `
         html body,
-        html body .${LIVE.text},
-        html body button,
-        html body input,
-        html body select,
-        html body textarea,
-        html body option {
+        html body :where(
+          a,
+          p,
+          span,
+          div,
+          li,
+          td,
+          th,
+          label,
+          legend,
+          strong,
+          b,
+          em,
+          small,
+          time,
+          summary,
+          h1,
+          h2,
+          h3,
+          h4,
+          h5,
+          h6,
+          button,
+          input,
+          select,
+          textarea,
+          option
+        ):not([class*="icon" i]):not([class*="fa-" i]):not([class^="fa" i]):not(.${NATIVE.control}):not(.${NATIVE.control} *) {
           font-family:
             ${stack} !important;
         }
+
       `;
     }
 
@@ -2615,12 +3144,6 @@
       )
     ) {
       css += `
-        /*
-         * Это запасное правило. Основное назначение
-         * цвета выполняется inline с !important —
-         * так цвет срабатывает даже против исходных
-         * селекторов сайта с ID и собственным !important.
-         */
         html body .${LIVE.text} {
           color:
             ${settings.textColor} !important;
@@ -2741,6 +3264,7 @@
         element instanceof
         HTMLElement
       ) ||
+      isNativeZone(element) ||
       !settings.textColorEnabled ||
       !/^#[\da-f]{6}$/i.test(
         settings.textColor
@@ -2814,6 +3338,54 @@
       );
   }
 
+  function stripLiveThemeFromSubtree(
+    root
+  ) {
+    if (!(root instanceof Element)) {
+      return;
+    }
+
+    const elements = [
+      root,
+      ...root.querySelectorAll('*'),
+    ];
+
+    for (const element of elements) {
+      stripLiveThemeFromElement(element);
+    }
+  }
+
+  function stripLiveThemeFromElement(
+    element,
+    keepRound = false
+  ) {
+    if (!(element instanceof HTMLElement)) {
+      return;
+    }
+
+    const classes = [
+      LIVE.surface,
+      LIVE.blue,
+      LIVE.neutral,
+      LIVE.neutralFallback,
+      LIVE.canvas,
+      LIVE.shell,
+      LIVE.hoverRound,
+      LIVE.roundClip,
+      LIVE.text,
+      LIVE.canvasImage,
+      LIVE.neutralImage,
+    ];
+
+    if (!keepRound) {
+      classes.push(LIVE.round);
+    }
+
+    element.classList.remove(...classes);
+    element.style.removeProperty(NEUTRAL_FALLBACK_VAR);
+    restoreTextInline(element);
+  }
+
   function scopedElements(
     root,
     selector = '*'
@@ -2848,7 +3420,6 @@
         )
       );
     } catch {
-      // Неподдерживаемый селектор.
     }
 
     return elements;
@@ -2897,6 +3468,7 @@
                   !element.closest(
                     `#${ID}-panel`
                   ) &&
+                  !isNativeZone(element) &&
                   element.id !==
                     `${ID}-button`
                 ) {
@@ -2907,7 +3479,6 @@
               }
             );
         } catch {
-          // Неподдерживаемый селектор.
         }
       }
     }
@@ -3015,13 +3586,6 @@
   }
 
   function findWindowShell() {
-    /*
-     * На внутренних страницах структура сайта
-     * различается. Сначала ищем настоящий Explorer
-     * через адресную строку, чтобы случайно не
-     * назначить shell музыкальному списку, сообщениям
-     * или другому большому содержимому страницы.
-     */
     const address =
       findAddressInput();
 
@@ -3174,6 +3738,7 @@
       ) ||
       element.id ===
         `${ID}-button` ||
+      isNativeZone(element) ||
       [
         'HTML',
         'BODY',
@@ -3464,14 +4029,7 @@
         settings.textColor
       );
 
-    const fontEnabled =
-      settings.font !==
-      'original';
-
-    if (
-      !colorEnabled &&
-      !fontEnabled
-    ) {
+    if (!colorEnabled) {
       return;
     }
 
@@ -3517,6 +4075,8 @@
             element.closest(
               `#${ID}-panel`
             ) ||
+            isNativeZone(element) ||
+            isRadioTitleText(element) ||
             element.id ===
               `${ID}-button` ||
             [
@@ -3614,13 +4174,6 @@
         }
       );
 
-    /*
-     * Часть записей Стрекозы хранит обычный текст
-     * прямо внутри DIV, рядом со ссылками и BR.
-     * Старый фильтр отмечал только вложенные ссылки,
-     * поэтому после «читать дальше» получалась смесь
-     * исходного чёрного и выбранного цвета.
-     */
     const walkerRoot =
       root instanceof Node
         ? root
@@ -3660,6 +4213,8 @@
         element.closest(
           `#${ID}-panel`
         ) ||
+        isNativeZone(element) ||
+        isRadioTitleText(element) ||
         element.id ===
           `${ID}-button` ||
         [
@@ -3697,6 +4252,11 @@
     reset = true,
     root = document.body
   ) {
+    if (root instanceof Element && isNativeZone(root)) {
+      stripLiveThemeFromSubtree(root);
+      return;
+    }
+
     if (reset) {
       clearLiveClasses();
     }
@@ -3728,11 +4288,6 @@
       LIVE.canvas
     );
 
-    /*
-     * Дополнительная проверка реальных
-     * вычисленных цветов нужна для
-     * элементов с CSS-переменными.
-     */
     scopedElements(
       root,
       '*'
@@ -3747,6 +4302,7 @@
             element.closest(
               `#${ID}-panel`
             ) ||
+            isNativeZone(element) ||
             element.id ===
               `${ID}-button`
           ) {
@@ -3878,13 +4434,6 @@
               [role="button"]
             `);
 
-          /*
-           * Белые карточки и серо-бежевый холст
-           * используют близкие цвета. Поэтому
-           * нейтральный fallback применяется лишь
-           * к элементам, похожим именно на карточку
-           * или панель, а не ко всей странице.
-           */
           const neutralSurface =
             !control &&
             /(?:card|panel|post|entry|profile|box|window|dialog|modal|notification|message|sidebar|feed|wall|item|content)/i
@@ -3988,10 +4537,6 @@
         }
       );
 
-    /*
-     * Скругление больше не зависит от
-     * палитры серо-бежевого фона.
-     */
     markIndependentRoundables(
       root
     );
@@ -5158,6 +5703,167 @@
     );
   }
 
+  function opaqueCssColors(
+    value
+  ) {
+    return String(value || '')
+      .replace(
+        COLOR_RE,
+        (token) => {
+          const color =
+            parseColor(token);
+
+          if (
+            !color ||
+            color.a <= 0 ||
+            color.a >= 0.999
+          ) {
+            return token;
+          }
+
+          return colorToCss({
+            ...color,
+            a: 1,
+          });
+        }
+      );
+  }
+
+  function makeRadioPopupOpaque(
+    root
+  ) {
+    if (
+      !(
+        root instanceof
+          HTMLElement
+      )
+    ) {
+      return;
+    }
+
+    const elements = [
+      root,
+      ...root.querySelectorAll('*'),
+    ];
+
+    for (const element of elements) {
+      if (!(element instanceof HTMLElement)) {
+        continue;
+      }
+
+      const computed =
+        getComputedStyle(element);
+
+      const color =
+        parseColor(
+          computed.backgroundColor
+        );
+
+      const opaqueImage =
+        opaqueCssColors(
+          computed.backgroundImage
+        );
+
+      const imageChanged =
+        computed.backgroundImage !== 'none' &&
+        opaqueImage !== computed.backgroundImage;
+
+      const colorChanged =
+        color &&
+        color.a > 0 &&
+        color.a < 0.999;
+
+      const opacityChanged =
+        Number(computed.opacity) < 0.999;
+
+      if (
+        !imageChanged &&
+        !colorChanged &&
+        !opacityChanged
+      ) {
+        continue;
+      }
+
+      rememberPopupInline(
+        element
+      );
+
+      if (colorChanged) {
+        element.style.setProperty(
+          'background-color',
+          colorToCss({
+            ...color,
+            a: 1,
+          }),
+          'important'
+        );
+      }
+
+      if (imageChanged) {
+        element.style.setProperty(
+          'background-image',
+          opaqueImage,
+          'important'
+        );
+      }
+
+      if (opacityChanged) {
+        element.style.setProperty(
+          'opacity',
+          '1',
+          'important'
+        );
+      }
+    }
+  }
+
+  function restoreRadioTitleText(
+    header
+  ) {
+    if (!(header instanceof HTMLElement)) {
+      return;
+    }
+
+    const elements = [
+      header,
+      ...header.querySelectorAll('*'),
+    ];
+
+    for (const element of elements) {
+      if (!(element instanceof HTMLElement)) {
+        continue;
+      }
+
+      element.classList.remove(
+        LIVE.text
+      );
+
+      restoreTextInline(
+        element
+      );
+    }
+  }
+
+  function isRadioTitleText(
+    element
+  ) {
+    if (!(element instanceof Element)) {
+      return false;
+    }
+
+    const titleBand =
+      element.closest(
+        `.${INTEGRATED.popupTitle}`
+      );
+
+    return Boolean(
+      titleBand &&
+      titleBand.closest(
+        `.${INTEGRATED.popupRadio}`
+      )
+    );
+  }
+
   function findExactText(
     text
   ) {
@@ -5257,21 +5963,33 @@
             /оценил|комментар|ответил|заявк/i
               .test(text)
           )
-          : (
-            Boolean(
-              current.querySelector(
-                'textarea'
-              )
-            ) ||
-            (
+          : type === 'radio'
+            ? (
               text.includes(
-                'Опубликовать'
+                'Радиостанции в эфире'
               ) &&
-              text.includes(
-                'Отмена'
+              (
+                /\bFM\b/i.test(text) ||
+                current.querySelectorAll(
+                  'a,button'
+                ).length >= 1
               )
             )
-          );
+            : (
+              Boolean(
+                current.querySelector(
+                  'textarea'
+                )
+              ) ||
+              (
+                text.includes(
+                  'Опубликовать'
+                ) &&
+                text.includes(
+                  'Отмена'
+                )
+              )
+            );
 
       if (contentMatches) {
         candidates.push(
@@ -5557,14 +6275,23 @@
 
       type === 'notice'
         ? INTEGRATED.popupNotice
-        : INTEGRATED.popupComposer
+        : type === 'radio'
+          ? INTEGRATED.popupRadio
+          : INTEGRATED.popupComposer
     );
 
     header?.classList.add(
       INTEGRATED.popupTitle
     );
 
+    if (type === 'radio') {
+      restoreRadioTitleText(
+        header
+      );
+    }
+
     if (
+      type !== 'radio' &&
       settings.popupOpaqueEnabled &&
       /^#[\da-f]{6}$/i
         .test(color)
@@ -5618,6 +6345,15 @@
     }
 
     if (
+      type === 'radio' &&
+      settings.popupOpaqueEnabled
+    ) {
+      makeRadioPopupOpaque(
+        root
+      );
+    }
+
+    if (
       type === 'notice' &&
       popupIsOpen(
         root
@@ -5629,6 +6365,1232 @@
     }
 
     return root;
+  }
+
+  const bannerInlineState = new WeakMap();
+  let activeBannerElement = null;
+  let activeBannerProfileId = '';
+  const activeBannerTouched = new Set();
+
+  function rememberBannerInline(
+    element
+  ) {
+    if (bannerInlineState.has(element)) {
+      return;
+    }
+
+    const properties = [
+      'background',
+      'background-image',
+      'background-size',
+      'background-position',
+      'background-repeat',
+      'background-color',
+      'background-blend-mode',
+      'object-fit',
+      'object-position',
+      'opacity',
+      'visibility',
+      'overflow',
+      'overflow-x',
+      'overflow-y',
+      'clip',
+      'clip-path',
+      'contain',
+      'position',
+      '--df-theme-v56-banner-image',
+      '--df-theme-v56-banner-size',
+      '--df-theme-v56-banner-position',
+      '--df-theme-v56-banner-height',
+      '--df-theme-v56-banner-fallback',
+    ];
+
+    const state = {
+      src:
+        element instanceof HTMLImageElement
+          ? element.getAttribute('src')
+          : null,
+      properties: {},
+    };
+
+    for (const property of properties) {
+      state.properties[property] = {
+        value: element.style.getPropertyValue(property),
+        priority: element.style.getPropertyPriority(property),
+      };
+    }
+
+    bannerInlineState.set(element, state);
+  }
+
+  function restoreBannerInline(
+    element
+  ) {
+    const state = bannerInlineState.get(element);
+    if (!state) return;
+
+    if (element instanceof HTMLImageElement) {
+      if (state.src === null) element.removeAttribute('src');
+      else element.setAttribute('src', state.src);
+    }
+
+    for (const [property, previous] of Object.entries(state.properties)) {
+      if (previous.value) {
+        element.style.setProperty(property, previous.value, previous.priority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    }
+
+    bannerInlineState.delete(element);
+  }
+
+  function currentProfileId() {
+    try {
+      const id = new URL(location.href).searchParams.get('id');
+      return String(id || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  function restoreBannerTouchedOnly() {
+    for (const element of [...activeBannerTouched]) {
+      if (element instanceof HTMLElement) {
+        restoreBannerInline(element);
+        element.classList.remove(
+          NATIVE.banner,
+          NATIVE.bannerHost,
+          NATIVE.bannerNative
+        );
+      }
+    }
+
+    activeBannerTouched.clear();
+  }
+
+  function restoreActiveBannerCustomization() {
+    restoreBannerTouchedOnly();
+    activeBannerElement = null;
+    activeBannerProfileId = '';
+  }
+
+  function bannerColorLooksDecorative(
+    color
+  ) {
+    const parsed = parseColor(String(color || ''));
+
+    if (!parsed || parsed.a < 0.08) {
+      return false;
+    }
+
+    const hsl = rgbToHsl(parsed);
+    const hue = (((hsl.h % 1) + 1) % 1) * 360;
+
+    const greenLike =
+      hue >= 55 &&
+      hue <= 165 &&
+      hsl.s >= 0.22 &&
+      hsl.l >= 0.16 &&
+      hsl.l <= 0.88;
+
+    const whiteLike =
+      hsl.s <= 0.18 &&
+      hsl.l >= 0.78;
+
+    return greenLike || whiteLike;
+  }
+
+  function bannerLayerHasProfileContent(
+    element
+  ) {
+    if (!(element instanceof HTMLElement)) {
+      return true;
+    }
+
+    const text = normalizedText(element).trim();
+
+    if (text.length > 8) {
+      return true;
+    }
+
+    if (
+      element.querySelector(
+        'a[href],button,input,textarea,select,[contenteditable="true"],[role="button"]'
+      )
+    ) {
+      return true;
+    }
+
+    const contentImage = [
+      ...element.querySelectorAll('img')
+    ].some((image) => {
+      const rect = image.getBoundingClientRect();
+      const ratio = rect.width / Math.max(1, rect.height);
+
+      return (
+        rect.width >= 24 &&
+        rect.height >= 24 &&
+        rect.width <= 260 &&
+        rect.height <= 260 &&
+        ratio >= 0.55 &&
+        ratio <= 1.8
+      );
+    });
+
+    return contentImage;
+  }
+
+  function bannerVisualLayers(
+    host,
+    referenceWidth
+  ) {
+    if (!(host instanceof HTMLElement)) return [];
+
+    const hostRect = host.getBoundingClientRect();
+    const width = Math.max(1, referenceWidth || hostRect.width);
+    const topLimit =
+      hostRect.top +
+      Math.min(
+        235,
+        Math.max(
+          120,
+          hostRect.height
+        )
+      );
+
+    return [
+      ...host.querySelectorAll(
+        'div,section,header,aside,figure,picture,img'
+      ),
+    ].filter((element) => {
+      if (
+        !(element instanceof HTMLElement) ||
+        element === host ||
+        element.closest(`#${ID}-panel`)
+      ) {
+        return false;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const ratio = rect.width / Math.max(1, rect.height);
+
+      if (
+        rect.width < width * 0.68 ||
+        rect.height < 8 ||
+        rect.height > 190 ||
+        ratio < 2.7 ||
+        rect.top < hostRect.top - 8 ||
+        rect.top > topLimit ||
+        rect.bottom > hostRect.top + 245
+      ) {
+        return false;
+      }
+
+      if (bannerLayerHasProfileContent(element)) {
+        return false;
+      }
+
+      if (element instanceof HTMLImageElement) {
+        return true;
+      }
+
+      try {
+        const computed = getComputedStyle(element);
+        const signature = `${element.id || ''} ${element.className || ''}`;
+
+        const painted =
+          String(computed.backgroundImage || 'none') !== 'none' ||
+          bannerColorLooksDecorative(computed.backgroundColor);
+
+        const named =
+          /banner|cover|grass|cloud|sky|landscape|profile[-_ ]?bg/i
+            .test(signature);
+
+        const emptyWideStrip =
+          rect.width >= width * 0.78 &&
+          rect.height <= 165;
+
+        return painted || named || emptyWideStrip;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  function bannerHostFor(
+    primary
+  ) {
+    if (!(primary instanceof HTMLElement)) {
+      return { host: primary, layers: primary ? [primary] : [] };
+    }
+
+    const primaryRect = primary.getBoundingClientRect();
+    let node = primary.parentElement;
+    let fallback = null;
+
+    for (
+      let depth = 0;
+      node &&
+      node !== document.body &&
+      depth < 6;
+      depth += 1
+    ) {
+      const rect = node.getBoundingClientRect();
+
+      const plausible =
+        rect.width >= primaryRect.width * 0.88 &&
+        rect.width <= primaryRect.width * 1.14 &&
+        rect.height >= primaryRect.height &&
+        rect.height <= 390 &&
+        rect.top <= primaryRect.top + 16 &&
+        rect.top >= primaryRect.top - 42 &&
+        rect.bottom >= primaryRect.bottom - 4;
+
+      if (plausible) {
+        const layers = bannerVisualLayers(node, primaryRect.width);
+
+        if (layers.length >= 2) {
+          return { host: node, layers };
+        }
+
+        if (!fallback && layers.length >= 1) {
+          fallback = { host: node, layers };
+        }
+      }
+
+      if (rect.height > 480) {
+        break;
+      }
+
+      node = node.parentElement;
+    }
+
+    if (fallback) {
+      return fallback;
+    }
+
+    return {
+      host: primary,
+      layers: primary instanceof HTMLImageElement ? [primary] : [],
+    };
+  }
+
+  function bannerRegionHeight(
+    host,
+    primary,
+    layers
+  ) {
+    if (!(host instanceof HTMLElement)) {
+      return 0;
+    }
+
+    const hostRect = host.getBoundingClientRect();
+    const rects = [];
+
+    if (primary instanceof HTMLElement && primary !== host) {
+      rects.push(primary.getBoundingClientRect());
+    }
+
+    for (const layer of layers || []) {
+      if (
+        layer instanceof HTMLElement &&
+        layer !== host
+      ) {
+        rects.push(layer.getBoundingClientRect());
+      }
+    }
+
+    let bottom =
+      rects.length
+        ? Math.max(...rects.map((rect) => rect.bottom))
+        : hostRect.top + Math.min(180, hostRect.height);
+
+    let height =
+      bottom -
+      hostRect.top;
+
+    height = Math.max(
+      70,
+      Math.min(
+        245,
+        hostRect.height,
+        height
+      )
+    );
+
+    return height;
+  }
+
+  function likelyProfileBanner() {
+    if (!document.body || !currentProfileId()) return null;
+
+    const candidates = [];
+    const nodes = [
+      ...document.querySelectorAll(`
+        [class*="banner" i],
+        [id*="banner" i],
+        [class*="cover" i],
+        [id*="cover" i],
+        [class*="profile" i][class*="header" i],
+        [id*="profile" i][id*="header" i],
+        img
+      `),
+    ];
+
+    nodes.push(
+      ...[...document.querySelectorAll('div,section,header')]
+        .filter((element) => {
+          try {
+            return getComputedStyle(element).backgroundImage !== 'none';
+          } catch {
+            return false;
+          }
+        })
+    );
+
+    for (const element of new Set(nodes)) {
+      if (
+        !(element instanceof HTMLElement) ||
+        element.closest(`#${ID}-panel`) ||
+        element.closest(`.${NATIVE.viewer}`)
+      ) {
+        continue;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const ratio = rect.width / Math.max(1, rect.height);
+
+      if (
+        rect.width < Math.min(520, innerWidth * 0.5) ||
+        rect.height < 55 ||
+        rect.height > 280 ||
+        ratio < 4 ||
+        rect.bottom < 0 ||
+        rect.top > Math.min(innerHeight * 0.65, 620)
+      ) {
+        continue;
+      }
+
+      const signature = `${element.id || ''} ${element.className || ''}`;
+      let score = rect.width / Math.max(1, innerWidth) * 20;
+
+      if (/banner|cover/i.test(signature)) score += 35;
+      if (/profile|header/i.test(signature)) score += 8;
+      if (element instanceof HTMLImageElement) score += 5;
+
+      try {
+        if (getComputedStyle(element).backgroundImage !== 'none') score += 12;
+      } catch {}
+
+      candidates.push({ element, score, area: rect.width * rect.height });
+    }
+
+    candidates.sort((a, b) =>
+      (b.score - a.score) || (b.area - a.area)
+    );
+
+    return candidates[0]?.element || null;
+  }
+
+  function applyBannerCustomization(
+    primary
+  ) {
+    if (!(primary instanceof HTMLElement)) return;
+
+    const source = currentBannerSource();
+
+    if (!currentProfileId()) {
+      restoreActiveBannerCustomization();
+      return;
+    }
+
+    if (!settings.bannerEnabled || !source) {
+      restoreBannerTouchedOnly();
+      primary.classList.add(NATIVE.banner);
+      stripLiveThemeFromElement(primary, true);
+      return;
+    }
+
+    const { host, layers } = bannerHostFor(primary);
+    if (!(host instanceof HTMLElement)) return;
+
+    const touched = new Set([host, ...layers]);
+
+    for (const old of [...activeBannerTouched]) {
+      if (!touched.has(old)) {
+        restoreBannerInline(old);
+        old.classList.remove(
+          NATIVE.banner,
+          NATIVE.bannerHost,
+          NATIVE.bannerNative
+        );
+        activeBannerTouched.delete(old);
+      }
+    }
+
+    const mode = String(settings.bannerMode || 'cover');
+    const position =
+      String(settings.bannerPosition || 'center center').trim() ||
+      'center center';
+
+    for (const element of touched) {
+      if (!(element instanceof HTMLElement)) continue;
+
+      rememberBannerInline(element);
+      activeBannerTouched.add(element);
+      element.classList.add(NATIVE.banner);
+
+      stripLiveThemeFromElement(element, true);
+
+      if (element === host) {
+        element.classList.add(NATIVE.bannerHost);
+        element.classList.remove(NATIVE.bannerNative);
+      } else {
+        element.classList.add(NATIVE.bannerNative);
+        element.classList.remove(NATIVE.bannerHost);
+      }
+    }
+
+    host
+      .querySelectorAll(`.${LIVE.roundClip}`)
+      .forEach((element) =>
+        element.classList.remove(LIVE.roundClip)
+      );
+
+    if (host instanceof HTMLImageElement) {
+      const current = String(host.currentSrc || host.src || '');
+
+      if (current !== source) {
+        host.src = source;
+      }
+
+      host.style.setProperty(
+        'object-fit',
+        mode === 'stretch' ? 'fill' : mode,
+        'important'
+      );
+      host.style.setProperty(
+        'object-position',
+        position,
+        'important'
+      );
+
+      return;
+    }
+
+    host.style.setProperty(
+      'background-color',
+      settings.neutralEnabled
+        ? settings.neutralLight
+        : '#ffffff',
+      'important'
+    );
+    host.style.setProperty(
+      'background-image',
+      `url(${JSON.stringify(source)})`,
+      'important'
+    );
+    host.style.setProperty(
+      'background-size',
+      mode === 'stretch'
+        ? '100% 100%'
+        : mode,
+      'important'
+    );
+    host.style.setProperty(
+      'background-position',
+      position,
+      'important'
+    );
+    host.style.setProperty(
+      'background-repeat',
+      'no-repeat',
+      'important'
+    );
+    host.style.setProperty(
+      'background-blend-mode',
+      'normal',
+      'important'
+    );
+
+    for (const layer of layers) {
+      if (
+        !(layer instanceof HTMLElement) ||
+        layer === host
+      ) {
+        continue;
+      }
+
+      if (bannerLayerHasProfileContent(layer)) {
+        continue;
+      }
+
+      if (layer instanceof HTMLImageElement) {
+        layer.style.setProperty(
+          'opacity',
+          '0',
+          'important'
+        );
+      } else {
+        layer.style.setProperty(
+          'background',
+          'transparent',
+          'important'
+        );
+        layer.style.setProperty(
+          'background-image',
+          'none',
+          'important'
+        );
+        layer.style.setProperty(
+          'background-color',
+          'transparent',
+          'important'
+        );
+        layer.style.setProperty(
+          'background-blend-mode',
+          'normal',
+          'important'
+        );
+      }
+    }
+  }
+
+  function findRecordViewerRoot() {
+    const addressInputs = [
+      ...document.querySelectorAll(`
+        input[type="text"],
+        input[type="url"],
+        input:not([type])
+      `),
+    ].filter((input) => {
+      const value = String(
+        input.value || input.getAttribute('value') || ''
+      ).trim();
+
+      return (
+        /^[a-z]:\\/i.test(value) &&
+        /(?:стрекоза|dragonfly|пользователи|записи|запись_)/i.test(value)
+      );
+    });
+
+    const roots = [];
+
+    for (const input of addressInputs) {
+      let current = input.parentElement;
+
+      for (let depth = 0; current && current !== document.body && depth < 10; depth += 1) {
+        if (!(current instanceof HTMLElement) || !elementVisible(current)) {
+          current = current?.parentElement || null;
+          continue;
+        }
+
+        const rect = current.getBoundingClientRect();
+        const text = normalizedText(current);
+        const looksLikeViewer =
+          /(?:обсуждение|comments\.log|user information|text tasks|media player tasks|комментировать|объект\(ы\)|—\s*запись|просмотр записи)/i.test(text);
+
+        if (
+          looksLikeViewer &&
+          rect.width >= Math.min(620, innerWidth * 0.48) &&
+          rect.height >= Math.min(360, innerHeight * 0.42) &&
+          rect.width <= innerWidth * 0.98 &&
+          rect.height <= innerHeight * 0.98
+        ) {
+          roots.push(current);
+        }
+
+        current = current.parentElement;
+      }
+    }
+
+    if (!roots.length) {
+      const titleCandidate = [...document.querySelectorAll('div,span,strong,b')]
+        .find((element) => {
+          if (!(element instanceof HTMLElement) || !elementVisible(element)) return false;
+          const text = normalizedText(element);
+          return /(?:просмотр записи\s*-\s*проводник|—\s*запись)$/i.test(text);
+        });
+
+      let current = titleCandidate?.parentElement || null;
+      for (let depth = 0; current && current !== document.body && depth < 9; depth += 1) {
+        const rect = current.getBoundingClientRect();
+        if (
+          elementVisible(current) &&
+          rect.width >= Math.min(620, innerWidth * 0.48) &&
+          rect.height >= Math.min(360, innerHeight * 0.42)
+        ) {
+          roots.push(current);
+        }
+        current = current.parentElement;
+      }
+    }
+
+    roots.sort((a, b) => elementArea(a) - elementArea(b));
+    return roots[0] || null;
+  }
+
+  function looksLikeProfileAvatarImage(
+    image
+  ) {
+    if (!(image instanceof HTMLImageElement)) return false;
+
+    const rect = image.getBoundingClientRect();
+    if (
+      rect.width < 18 ||
+      rect.height < 18 ||
+      rect.width > 220 ||
+      rect.height > 220
+    ) {
+      return false;
+    }
+
+    const ratio = rect.width / Math.max(1, rect.height);
+    if (ratio < 0.60 || ratio > 1.65) return false;
+
+    const src = String(image.currentSrc || image.src || '');
+    const alt = String(image.alt || '');
+    const signature = `${image.id || ''} ${image.className || ''}`;
+    const profileLink = image.closest('a[href*="?id="], a[href*="&id="], a[href*="/id/"]');
+
+    return Boolean(
+      profileLink ||
+      /avatar|ava|userpic|profile|photo/i.test(`${src} ${alt} ${signature}`)
+    );
+  }
+
+  function findAvatarFrameHost(
+    image
+  ) {
+    if (!(image instanceof HTMLImageElement)) return null;
+
+    const imageRect = image.getBoundingClientRect();
+    let best = image.parentElement;
+    let node = image.parentElement;
+
+    for (
+      let depth = 0;
+      node &&
+      node !== document.body &&
+      depth < 5;
+      depth += 1,
+      node = node.parentElement
+    ) {
+      if (!(node instanceof HTMLElement)) continue;
+
+      const rect = node.getBoundingClientRect();
+      const ratio = rect.width / Math.max(1, rect.height);
+
+      if (
+        rect.width < imageRect.width * 0.92 ||
+        rect.height < imageRect.height * 0.92 ||
+        rect.width > Math.max(240, imageRect.width * 2.6) ||
+        rect.height > Math.max(240, imageRect.height * 2.6) ||
+        ratio < 0.58 ||
+        ratio > 1.72
+      ) {
+        continue;
+      }
+
+      const text = normalizedText(node);
+      if (
+        text.length > 18 &&
+        rect.width > imageRect.width * 1.55
+      ) {
+        continue;
+      }
+
+      best = node;
+
+      const computed = getComputedStyle(node);
+      const hasDecor =
+        /url\(/i.test(String(computed.backgroundImage || '')) ||
+        (computed.borderStyle !== 'none' && parseFloat(computed.borderWidth) > 0) ||
+        (computed.boxShadow && computed.boxShadow !== 'none') ||
+        node.querySelectorAll('img').length > 1 ||
+        /frame|ramk|avatar|photo|ava/i.test(`${node.id || ''} ${node.className || ''}`);
+
+      if (hasDecor) break;
+    }
+
+    return best instanceof HTMLElement ? best : image;
+  }
+
+  function protectAvatarFrames(
+    root = document
+  ) {
+    const scope =
+      root instanceof Document ||
+      root instanceof Element
+        ? root
+        : document;
+
+    let images = [];
+
+    try {
+      images = [
+        ...(scope instanceof HTMLImageElement ? [scope] : []),
+        ...scope.querySelectorAll('img'),
+      ];
+    } catch {
+      return;
+    }
+
+    for (const image of images) {
+      if (!looksLikeProfileAvatarImage(image)) continue;
+
+      const host = findAvatarFrameHost(image);
+      if (!(host instanceof HTMLElement)) continue;
+
+      host.classList.add(
+        NATIVE.root,
+        NATIVE.avatarFrame
+      );
+
+      stripLiveThemeFromSubtree(host);
+    }
+  }
+
+  function protectViewerIconControls(
+    viewer
+  ) {
+    if (!(viewer instanceof HTMLElement)) return;
+
+    const candidates = [
+      ...viewer.querySelectorAll(`
+        button,
+        a,
+        [role="button"],
+        input[type="button"],
+        input[type="image"]
+      `),
+    ];
+
+    for (const element of candidates) {
+      if (!(element instanceof HTMLElement)) continue;
+
+      const rect = element.getBoundingClientRect();
+      if (
+        rect.width < 10 ||
+        rect.height < 10 ||
+        rect.width > 76 ||
+        rect.height > 62
+      ) {
+        continue;
+      }
+
+      let computed;
+      try {
+        computed = getComputedStyle(element);
+      } catch {
+        continue;
+      }
+
+      const text = normalizedText(element);
+      const hasImage = Boolean(element.querySelector('img,svg,canvas'));
+      const hasBackgroundImage = /url\(/i.test(String(computed.backgroundImage || ''));
+      const inputImage = element.matches('input[type="image"]');
+      const compactIconLabel =
+        text.length <= 4 &&
+        Boolean(
+          element.getAttribute('title') ||
+          element.getAttribute('aria-label') ||
+          element.matches('button,a,[role="button"]')
+        );
+
+      if (!(hasImage || hasBackgroundImage || inputImage || compactIconLabel)) {
+        continue;
+      }
+
+      element.classList.add(
+        NATIVE.root,
+        NATIVE.control
+      );
+
+      element.classList.remove(
+        NATIVE.viewerBlueStrong,
+        NATIVE.viewerBlueSoft,
+        NATIVE.viewerNeutral,
+        NATIVE.viewerCanvas,
+        NATIVE.viewerControlSurface
+      );
+
+      stripLiveThemeFromSubtree(element);
+    }
+  }
+
+  function protectWindowControls(
+    root
+  ) {
+    if (!(root instanceof HTMLElement)) return;
+
+    const rootRect = root.getBoundingClientRect();
+
+    [...root.querySelectorAll('button,a,div,span,input')]
+      .filter((element) => element instanceof HTMLElement)
+      .filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.width >= 12 && rect.width <= 44 &&
+          rect.height >= 12 && rect.height <= 44 &&
+          rect.top >= rootRect.top - 2 &&
+          rect.top <= rootRect.top + 48 &&
+          rect.right >= rootRect.right - 145 &&
+          rect.right <= rootRect.right + 4
+        );
+      })
+      .forEach((element) => {
+        element.classList.add(NATIVE.root, NATIVE.control);
+        element.classList.remove(
+          NATIVE.viewerBlueStrong,
+          NATIVE.viewerBlueSoft,
+          NATIVE.viewerNeutral,
+          NATIVE.viewerCanvas,
+          NATIVE.viewerControlSurface
+        );
+        stripLiveThemeFromSubtree(element);
+      });
+  }
+
+  function clearNativeViewerThemeClasses(
+    root = document
+  ) {
+    const selector = `
+      .${NATIVE.viewerBlueStrong},
+      .${NATIVE.viewerBlueSoft},
+      .${NATIVE.viewerNeutral},
+      .${NATIVE.viewerCanvas},
+      .${NATIVE.viewerControlSurface}
+    `;
+
+    try {
+      const targets = [
+        ...(root instanceof Element && root.matches(selector) ? [root] : []),
+        ...root.querySelectorAll(selector),
+      ];
+
+      targets.forEach((element) => {
+        element.classList.remove(
+          NATIVE.viewerBlueStrong,
+          NATIVE.viewerBlueSoft,
+          NATIVE.viewerNeutral,
+          NATIVE.viewerCanvas,
+          NATIVE.viewerControlSurface
+        );
+      });
+    } catch {}
+  }
+
+  function applyNativeViewerTheme(
+    viewer
+  ) {
+    if (!(viewer instanceof HTMLElement)) return;
+
+    clearNativeViewerThemeClasses(viewer);
+
+    if (
+      !settings.enabled ||
+      !settings.viewerEnabled
+    ) {
+      return;
+    }
+
+    const rootRect =
+      viewer.getBoundingClientRect();
+
+    viewer.classList.add(
+      NATIVE.viewerCanvas
+    );
+
+    const rootArea =
+      Math.max(
+        1,
+        rootRect.width *
+        rootRect.height
+      );
+
+    const elements = [
+      viewer,
+      ...viewer
+        .querySelectorAll('*'),
+    ];
+
+    for (
+      const element
+      of elements
+    ) {
+      if (
+        !(
+          element instanceof
+          HTMLElement
+        ) ||
+        element === viewer ||
+        element.classList.contains(
+          NATIVE.control
+        ) ||
+        element.closest(
+          `#${ID}-panel`
+        ) ||
+        [
+          'SCRIPT',
+          'STYLE',
+          'LINK',
+          'META',
+          'IMG',
+          'VIDEO',
+          'AUDIO',
+          'CANVAS',
+          'SVG',
+          'PATH',
+        ].includes(
+          element.tagName
+        )
+      ) {
+        continue;
+      }
+
+      const rect =
+        element
+          .getBoundingClientRect();
+
+      if (
+        rect.width < 3 ||
+        rect.height < 3
+      ) {
+        continue;
+      }
+
+      if (
+        element.matches(`
+          button,
+          input,
+          select,
+          textarea,
+          [role="button"]
+        `)
+      ) {
+        element.classList.add(
+          NATIVE.viewerControlSurface
+        );
+        continue;
+      }
+
+      let computed;
+
+      try {
+        computed =
+          getComputedStyle(
+            element
+          );
+      } catch {
+        continue;
+      }
+
+      if (
+        /url\(/i.test(
+          String(
+            computed
+              .backgroundImage ||
+            ''
+          )
+        )
+      ) {
+        continue;
+      }
+
+      const colors =
+        computedBackgroundColors(
+          element
+        );
+
+      if (!colors.length) {
+        continue;
+      }
+
+      const hsl =
+        colors.map(
+          rgbToHsl
+        );
+
+      const blueLike =
+        hsl.some(
+          (color) =>
+            color.s >= 0.12 &&
+            color.h >= 165 &&
+            color.h <= 285
+        );
+
+      const nearTop =
+        rect.top <=
+          rootRect.top +
+          150;
+
+      const wideBand =
+        rect.width >=
+          rootRect.width *
+          0.28 &&
+        rect.height >= 14 &&
+        rect.height <= 100;
+
+      if (
+        blueLike ||
+        (
+          nearTop &&
+          wideBand &&
+          hsl.some(
+            (color) =>
+              color.s >= 0.08 &&
+              color.l <= 0.88
+          )
+        )
+      ) {
+        const strong =
+          rect.top <=
+            rootRect.top +
+            64 &&
+          rect.height <= 82 &&
+          rect.width >=
+            rootRect.width *
+            0.28;
+
+        element.classList.add(
+          strong
+            ? NATIVE.viewerBlueStrong
+            : NATIVE.viewerBlueSoft
+        );
+
+        continue;
+      }
+
+      const lightest =
+        Math.max(
+          ...hsl.map(
+            (color) =>
+              color.l
+          )
+        );
+
+      const leastSaturated =
+        Math.min(
+          ...hsl.map(
+            (color) =>
+              color.s
+          )
+        );
+
+      const area =
+        rect.width *
+        rect.height;
+
+      const largeSurface =
+        area >=
+          rootArea *
+          0.055 ||
+        (
+          rect.width >=
+            rootRect.width *
+            0.42 &&
+          rect.height >=
+            rootRect.height *
+            0.18
+        );
+
+      if (
+        lightest >= 0.88 &&
+        leastSaturated <= 0.32
+      ) {
+        element.classList.add(
+          largeSurface
+            ? NATIVE.viewerCanvas
+            : NATIVE.viewerNeutral
+        );
+
+        continue;
+      }
+
+      if (
+        lightest >= 0.58 &&
+        leastSaturated <= 0.28
+      ) {
+        element.classList.add(
+          NATIVE.viewerNeutral
+        );
+      }
+    }
+  }
+
+  function refreshNativeZones() {
+    protectAvatarFrames(document);
+
+    const viewer = findRecordViewerRoot();
+
+    if (viewer) {
+      viewer.classList.add(NATIVE.root, NATIVE.viewer);
+      stripLiveThemeFromSubtree(viewer);
+    } else {
+      clearNativeViewerThemeClasses(document);
+    }
+
+    const address = findAddressInput();
+    const explorerRoot = findChromeRoot(address);
+
+    if (explorerRoot) {
+      protectWindowControls(explorerRoot);
+    }
+
+    if (viewer) {
+      protectWindowControls(viewer);
+      protectViewerIconControls(viewer);
+      applyNativeViewerTheme(viewer);
+    }
+
+    const profileId = currentProfileId();
+    let banner = null;
+
+    if (profileId) {
+      if (
+        activeBannerElement?.isConnected &&
+        activeBannerProfileId === profileId
+      ) {
+        banner = activeBannerElement;
+      } else {
+        banner = likelyProfileBanner();
+      }
+    }
+
+    if (
+      activeBannerElement &&
+      (activeBannerElement !== banner || activeBannerProfileId !== profileId)
+    ) {
+      restoreActiveBannerCustomization();
+    }
+
+    activeBannerElement = banner;
+    activeBannerProfileId = profileId;
+
+    if (banner) {
+      banner.classList.add(NATIVE.banner);
+      banner.classList.remove(
+        LIVE.surface,
+        LIVE.blue,
+        LIVE.neutral,
+        LIVE.neutralFallback,
+        LIVE.canvas,
+        LIVE.shell,
+        LIVE.round,
+        LIVE.hoverRound,
+        LIVE.roundClip,
+        LIVE.text,
+        LIVE.canvasImage,
+        LIVE.neutralImage
+      );
+      banner.style.removeProperty(NEUTRAL_FALLBACK_VAR);
+      restoreTextInline(banner);
+      applyBannerCustomization(banner);
+    } else if (!profileId || !settings.bannerEnabled) {
+      restoreActiveBannerCustomization();
+    }
   }
 
   function clearIntegratedClasses() {
@@ -5649,6 +7611,7 @@
         .${INTEGRATED.popupBody},
         .${INTEGRATED.popupComposer},
         .${INTEGRATED.popupNotice},
+        .${INTEGRATED.popupRadio},
         .${INTEGRATED.popupOpen}
       `)
       .forEach(
@@ -5666,6 +7629,7 @@
             INTEGRATED.popupBody,
             INTEGRATED.popupComposer,
             INTEGRATED.popupNotice,
+            INTEGRATED.popupRadio,
             INTEGRATED.popupOpen
           )
       );
@@ -5682,6 +7646,7 @@
     integratedApplying = true;
 
     try {
+      refreshNativeZones();
       clearIntegratedClasses();
 
       if (!settings.enabled) {
@@ -5766,6 +7731,12 @@
       paintPopup(
         'composer',
         'Создание записи',
+        settings.popupColor
+      );
+
+      paintPopup(
+        'radio',
+        'Радиостанции в эфире',
         settings.popupColor
       );
     } finally {
@@ -5869,13 +7840,6 @@
         8
       );
 
-    /*
-     * Aero больше не задаёт собственную
-     * цветную подложку. Прозрачностью синего
-     * управляет только blueTransparency,
-     * поэтому включение размытия не делает
-     * панели визуально плотнее.
-     */
     const bandOpacity =
       Math.max(
         0.22,
@@ -5884,13 +7848,226 @@
       );
 
     let css = `
-      /*
-       * Внешняя оболочка больше не получает
-       * overflow:hidden: именно он блокировал
-       * вертикальную прокрутку и обрезал окна.
-       * Скругление выполняется на конкретных
-       * поверхностях и слоях заголовка.
-       */
+      .${NATIVE.viewer},
+      .${NATIVE.viewer} * {
+        -webkit-backdrop-filter:
+          none !important;
+
+        backdrop-filter:
+          none !important;
+      }
+
+      .${NATIVE.control},
+      .${NATIVE.control} * {
+        -webkit-backdrop-filter:
+          none !important;
+
+        backdrop-filter:
+          none !important;
+
+        filter:
+          none !important;
+
+      }
+
+      .${NATIVE.viewer},
+      .${NATIVE.viewer} *,
+      .${NATIVE.viewer} *::before,
+      .${NATIVE.viewer} *::after {
+        border-radius:
+          0 !important;
+      }
+
+      .${NATIVE.viewer} img,
+      .${NATIVE.viewer} svg,
+      .${NATIVE.viewer} canvas,
+      .${NATIVE.viewer} .${NATIVE.control},
+      .${NATIVE.viewer} .${NATIVE.control} * {
+        filter:
+          none !important;
+
+        opacity:
+          1 !important;
+
+        mix-blend-mode:
+          normal !important;
+      }
+
+      .${NATIVE.viewerBlueStrong} {
+        background:
+          linear-gradient(
+            to bottom,
+            ${settings.viewerLight} 0%,
+            ${settings.viewerMiddle} 54%,
+            ${settings.viewerDark} 100%
+          ) !important;
+
+        background-color:
+          ${settings.viewerMiddle} !important;
+      }
+
+      .${NATIVE.viewerBlueSoft} {
+        background:
+          linear-gradient(
+            to bottom,
+            ${settings.viewerLight} 0%,
+            ${settings.viewerMiddle} 100%
+          ) !important;
+
+        background-color:
+          ${settings.viewerLight} !important;
+      }
+
+      .${NATIVE.viewerNeutral} {
+        background:
+          ${settings.viewerLight} !important;
+
+        background-color:
+          ${settings.viewerLight} !important;
+
+        background-image:
+          none !important;
+      }
+
+      .${NATIVE.viewerCanvas} {
+        background:
+          ${settings.viewerCanvas} !important;
+
+        background-color:
+          ${settings.viewerCanvas} !important;
+
+        background-image:
+          none !important;
+      }
+
+      .${NATIVE.viewerControlSurface} {
+        background-color:
+          ${settings.viewerLight} !important;
+
+        background-image:
+          linear-gradient(
+            to bottom,
+            ${settings.viewerLight},
+            ${settings.viewerMiddle}
+          ) !important;
+      }
+
+      .${NATIVE.viewerBlueStrong},
+      .${NATIVE.viewerBlueSoft},
+      .${NATIVE.viewerNeutral},
+      .${NATIVE.viewerCanvas},
+      .${NATIVE.viewerControlSurface} {
+        opacity:
+          1 !important;
+
+        -webkit-backdrop-filter:
+          none !important;
+
+        backdrop-filter:
+          none !important;
+
+        filter:
+          none !important;
+
+        mix-blend-mode:
+          normal !important;
+      }
+
+      ${settings.viewerEnabled ? `
+      .${NATIVE.viewer} :where(
+        a,
+        p,
+        span,
+        div,
+        label,
+        legend,
+        strong,
+        b,
+        em,
+        small,
+        time,
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6,
+        td,
+        th,
+        li
+      ):not(.${NATIVE.control}):not(.${NATIVE.control} *) {
+        color:
+          ${settings.viewerText} !important;
+
+        -webkit-text-fill-color:
+          ${settings.viewerText} !important;
+
+        text-decoration-color:
+          ${settings.viewerText} !important;
+      }
+      ` : ''}
+
+      .${NATIVE.bannerHost} {
+        isolation:
+          isolate !important;
+      }
+
+      .${NATIVE.bannerHost}::before,
+      .${NATIVE.bannerHost}::after {
+        background:
+          none !important;
+
+        background-image:
+          none !important;
+
+        box-shadow:
+          none !important;
+      }
+
+      .${NATIVE.bannerNative}::before,
+      .${NATIVE.bannerNative}::after {
+        background:
+          none !important;
+
+        background-image:
+          none !important;
+
+        box-shadow:
+          none !important;
+      }
+
+      .${NATIVE.bannerNative}:not(
+        .${NATIVE.bannerHost}
+      ) {
+        background:
+          transparent !important;
+
+        background-color:
+          transparent !important;
+
+        background-image:
+          none !important;
+
+        background-blend-mode:
+          normal !important;
+      }
+
+      img.${NATIVE.bannerNative} {
+        opacity:
+          0 !important;
+      }
+
+      .${NATIVE.bannerHost} .${LIVE.roundClip} {
+        overflow:
+          visible !important;
+
+        clip:
+          auto !important;
+
+        clip-path:
+          none !important;
+      }
+
       html {
         overflow-y:
           auto !important;
@@ -5915,12 +8092,6 @@
           border-box !important;
       }
 
-      /*
-       * Aero раньше случайно исправлял прокрутку,
-       * потому что назначал корню Explorer
-       * position:relative. Теперь это правило
-       * работает всегда, независимо от Aero.
-       */
       .${INTEGRATED.explorerRoot} {
         position:
           relative !important;
@@ -5938,10 +8109,6 @@
           visible !important;
       }
 
-      /*
-       * Окно уведомлений временно снимает
-       * отсечение с собственных предков.
-       */
       .${INTEGRATED.popupOpen} {
         overflow:
           visible !important;
@@ -5980,10 +8147,6 @@
       }
     `;
 
-    /*
-     * Safe hotfix 1.4: синяя прозрачность
-     * больше не копирует обои внутрь панели.
-     */
     if (
       settings.blueEnabled &&
       Number(
@@ -6063,12 +8226,6 @@
       settings.neutralEnabled
     ) {
       css += `
-        /*
-         * Динамические белые карточки иногда имеют
-         * inline-background и не присутствуют в CSS
-         * во время первой сборки. Для них сохраняется
-         * вычисленный оттенок палитры отдельно.
-         */
         .${LIVE.neutralFallback}:not(
           .${LIVE.blue}
         ):not(
@@ -6099,11 +8256,6 @@
       ) > 0
     ) {
       css += `
-        /*
-         * Прозрачность светлых карточек отделена
-         * от синего интерфейса, основного холста
-         * и элементов управления.
-         */
         .${LIVE.neutral}:not(
           .${LIVE.blue}
         ):not(
@@ -6123,10 +8275,6 @@
             padding-box !important;
         }
 
-        /*
-         * Однотонные градиенты убираются,
-         * но настоящие изображения сохраняются.
-         */
         .${LIVE.neutral}:not(
           .${LIVE.blue}
         ):not(
@@ -6165,13 +8313,6 @@
             padding-box !important;
         }
 
-        /*
-         * У однотонных серо-бежевых панелей
-         * убирается мешающий непрозрачный градиент.
-         * Настоящие фоновые изображения с url(...)
-         * сохраняются на Музыке, в Сообщениях,
-         * Друзьях и Сообществах.
-         */
         .${LIVE.canvas}:not(
           .${INTEGRATED.popupRoot}
         ):not(
@@ -6210,18 +8351,6 @@
           pointer-events:
             none !important;
 
-          /*
-           * Цвет и альфа уже находятся на
-           * .${LIVE.blue}. Этот слой отвечает
-           * только за backdrop-filter, иначе
-           * две полупрозрачные подложки
-           * складывались и убирали прозрачность.
-           *
-           * Почти нулевая альфа нужна лишь как
-           * триггер для реализаций браузеров,
-           * которым требуется нарисованный фон
-           * для стабильного backdrop-filter.
-           */
           background-image:
             none !important;
 
@@ -6283,12 +8412,6 @@
             1 !important;
         }
 
-        /*
-         * Финальный барьер от конфликтов:
-         * Aero не получает opacity, filter
-         * или дополнительный непрозрачный фон
-         * на самих синих элементах.
-         */
         .${LIVE.blue}:not(
           .${INTEGRATED.popupNotice}
         ) {
@@ -6307,13 +8430,6 @@
       `;
     }
 
-    /*
-     * Верхняя рамка Explorer намеренно всегда
-     * остаётся прямоугольной. Общая настройка
-     * закруглений влияет только на содержимое сайта.
-     * Здесь также нет overflow:hidden, чтобы рамка
-     * не вмешивалась в прокрутку и уведомления.
-     */
     css += `
       .${INTEGRATED.explorerFrame},
       .${INTEGRATED.explorerTitle},
@@ -6360,6 +8476,128 @@
           border-box !important;
       }
     `;
+
+    const chromeHasTransparency =
+      (
+        settings.blueEnabled &&
+        Number(settings.blueTransparency) > 0
+      ) ||
+      (
+        settings.neutralEnabled &&
+        Number(settings.neutralTransparency) > 0
+      ) ||
+      (
+        settings.canvasEnabled &&
+        Number(settings.canvasTransparency) > 0
+      );
+
+    if (chromeHasTransparency) {
+      const chromeDark =
+        settings.blueEnabled
+          ? settings.blueDark
+          : settings.neutralEnabled
+            ? settings.neutralDark
+            : settings.canvasEnabled
+              ? settings.canvasDark
+              : '#d4d0c8';
+
+      const chromeMiddle =
+        settings.blueEnabled
+          ? settings.blueMiddle
+          : settings.neutralEnabled
+            ? settings.neutralMiddle
+            : settings.canvasEnabled
+              ? settings.canvasMiddle
+              : '#ece9d8';
+
+      const chromeLight =
+        settings.blueEnabled
+          ? settings.blueLight
+          : settings.neutralEnabled
+            ? settings.neutralLight
+            : settings.canvasEnabled
+              ? settings.canvasLight
+              : '#ffffff';
+
+      css += `
+        .${INTEGRATED.explorerFrame},
+        .${INTEGRATED.explorerRoot},
+        .${INTEGRATED.explorerTitle},
+        .${INTEGRATED.explorerTitleLayer},
+        .${INTEGRATED.explorerBand},
+        .${INTEGRATED.explorerAddress} {
+          opacity:
+            1 !important;
+
+          filter:
+            none !important;
+
+          mix-blend-mode:
+            normal !important;
+        }
+
+        .${INTEGRATED.explorerTitle},
+        .${INTEGRATED.explorerTitleLayer},
+        .${INTEGRATED.explorerBand},
+        .${INTEGRATED.explorerAddress}:not(input) {
+          background-color:
+            ${chromeMiddle} !important;
+
+          background-image:
+            linear-gradient(
+              to bottom,
+              ${chromeLight},
+              ${chromeMiddle} 52%,
+              ${chromeDark}
+            ) !important;
+
+          background-size:
+            100% 100% !important;
+
+          background-repeat:
+            no-repeat !important;
+
+          background-position:
+            center center !important;
+
+          background-blend-mode:
+            normal !important;
+
+          -webkit-backdrop-filter:
+            none !important;
+
+          backdrop-filter:
+            none !important;
+
+          isolation:
+            isolate !important;
+        }
+
+        .${INTEGRATED.explorerAddress} input,
+        input.${INTEGRATED.explorerAddress} {
+          background-color:
+            ${chromeLight} !important;
+
+          background-image:
+            none !important;
+
+          opacity:
+            1 !important;
+
+          -webkit-backdrop-filter:
+            none !important;
+
+          backdrop-filter:
+            none !important;
+
+          filter:
+            none !important;
+
+          mix-blend-mode:
+            normal !important;
+        }
+      `;
+    }
 
     if (settings.roundedEnabled) {
       css += `
@@ -6447,21 +8685,16 @@
             none !important;
         }
 
-        button,
-        input,
-        select,
-        textarea {
+        button:not(.${NATIVE.root}):not(.${NATIVE.root} *),
+        input:not(.${NATIVE.root}):not(.${NATIVE.root} *),
+        select:not(.${NATIVE.root}):not(.${NATIVE.root} *),
+        textarea:not(.${NATIVE.root}):not(.${NATIVE.root} *) {
           border-radius:
             ${controlRadius}px !important;
         }
       `;
     }
 
-    /*
-     * Защита от общих правил закругления:
-     * заголовок Explorer остаётся острым даже
-     * после динамического пересканирования DOM.
-     */
     css += `
       .${INTEGRATED.explorerFrame},
       .${INTEGRATED.explorerRoot},
@@ -6472,11 +8705,22 @@
       }
     `;
 
-    /*
-     * Последнее правило намеренно идёт после
-     * Explorer и shell: открытое уведомление
-     * не должно обрезаться их overflow:hidden.
-     */
+    css += `
+      .${NATIVE.viewer},
+      .${NATIVE.viewer} *,
+      .${NATIVE.viewer} *::before,
+      .${NATIVE.viewer} *::after {
+        border-radius:
+          0 !important;
+      }
+
+      .${NATIVE.avatarFrame},
+      .${NATIVE.avatarFrame} * {
+        clip-path:
+          none !important;
+      }
+    `;
+
     css += `
       .${LIVE.shell}.${INTEGRATED.popupOpen},
       .${INTEGRATED.explorerFrame}.${INTEGRATED.popupOpen},
@@ -6753,6 +8997,8 @@
       return;
     }
 
+    refreshNativeZones();
+
     const full =
       dynamicFullRefresh ||
       !dynamicRoots.size;
@@ -6822,6 +9068,40 @@
       );
   }
 
+  function scheduleSettledFullRefresh() {
+    if (!settings.enabled) return;
+
+    clearTimeout(settledRefreshTimer);
+    settledRefreshTimer = window.setTimeout(() => {
+      settledRefreshTimer = 0;
+
+      if (userIsEditing()) {
+        scheduleSettledFullRefresh();
+        return;
+      }
+
+      refreshNativeZones();
+      scheduleDynamicRefresh(0, null, true);
+      scheduleIntegratedApply(0);
+    }, 180);
+
+    if (!settledRefreshLateTimer) {
+      settledRefreshLateTimer = window.setTimeout(() => {
+        settledRefreshLateTimer = 0;
+
+        if (!settings.enabled) return;
+        if (userIsEditing()) {
+          scheduleSettledFullRefresh();
+          return;
+        }
+
+        refreshNativeZones();
+        scheduleDynamicRefresh(0, null, true);
+        scheduleIntegratedApply(0);
+      }, 900);
+    }
+  }
+
   function scheduleSafeRebuild(
     delay = 150
   ) {
@@ -6849,6 +9129,10 @@
   async function rebuild() {
     const currentGeneration =
       ++generation;
+
+    if (!fontStyle) {
+      syncFontStyle('');
+    }
 
     if (!themeStyle) {
       themeStyle =
@@ -6888,13 +9172,20 @@
       !settings.enabled
     ) {
       lastStatistics = null;
+      syncFontStyle('');
       themeStyle.textContent = '';
       effectsStyle.textContent = '';
       clearLiveClasses();
       clearIntegratedClasses();
+      refreshNativeZones();
+      if (activeBannerElement || activeBannerTouched.size) {
+        restoreActiveBannerCustomization();
+      }
       applyAddressBarColor();
       return;
     }
+
+    refreshNativeZones();
 
     let customFontSource = '';
 
@@ -6955,10 +9246,13 @@
         new Set(),
     };
 
-    let css =
+    syncFontStyle(
       fontCss(
         customFontSource
-      );
+      )
+    );
+
+    let css = '';
 
     for (
       const sheet
@@ -6975,30 +9269,15 @@
         );
     }
 
-    /*
-     * Фон добавляется после стилей сайта.
-     * Это не даёт исходному background
-     * снова проявиться ниже оболочки.
-     */
     const wallpaper =
       wallpaperCss();
 
-    /*
-     * Сначала применяется обычная палитра.
-     * Затем находятся реальные элементы,
-     * включая использующие CSS-переменные.
-     */
     themeStyle.textContent =
       css +
       wallpaper;
 
-    /*
-     * Статистика селекторов сохраняется для
-     * лёгкого обновления динамического DOM.
-     * Такое обновление не переписывает @font-face
-     * и не заставляет браузер заново считать
-     * метрики кастомного шрифта при каждом вводе.
-     */
+    refreshNativeZones();
+
     lastStatistics =
       statistics;
 
@@ -7006,11 +9285,6 @@
       statistics
     );
 
-    /*
-     * Эффекты вынесены во второй style-слой.
-     * Базовый CSS и @font-face больше не парсятся
-     * повторно только ради стекла и скругления.
-     */
     effectsStyle.textContent =
       effectsCss();
 
@@ -7022,54 +9296,6 @@
 
   function userInterfaceCss() {
     return `
-      #${ID}-button {
-        all:
-          initial !important;
-
-        position:
-          fixed !important;
-
-        right:
-          16px !important;
-
-        bottom:
-          14px !important;
-
-        z-index:
-          2147483646 !important;
-
-        width:
-          46px !important;
-
-        height:
-          42px !important;
-
-        border:
-          2px outset
-          #fff !important;
-
-        background:
-          #ece9d8 !important;
-
-        color:
-          #111 !important;
-
-        font:
-          21px/38px
-          Tahoma,
-          sans-serif !important;
-
-        text-align:
-          center !important;
-
-        cursor:
-          pointer !important;
-
-        box-shadow:
-          0 2px 9px
-          #0006 !important;
-      }
-
       #${ID}-panel,
       #${ID}-panel * {
         box-sizing:
@@ -7371,6 +9597,18 @@
 
         flex-wrap:
           wrap !important;
+      }
+
+      #${ID}-panel .share-grid {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 7px !important;
+      }
+
+      #${ID}-panel .share-note {
+        margin-top: 7px !important;
+        color: #555 !important;
+        font-size: 11px !important;
       }
 
       #${ID}-panel .actions .reset-button {
@@ -7715,7 +9953,7 @@
 
     panel.innerHTML = `
       <b>
-        Sparx — Своя тема для соцсети «Стрекоза» v1.5
+        Sparx — Своя тема для соцсети «Стрекоза» v1.6.12
       </b>
 
       <div class="master-toggle">
@@ -7980,6 +10218,126 @@
         </div>
       </fieldset>
 
+      <fieldset>
+        <legend>
+          Баннер профиля
+        </legend>
+
+        <div class="grid">
+          <label>
+            Заменять баннер:
+          </label>
+
+          <input
+            id="${ID}-banner-enabled"
+            type="checkbox"
+          >
+
+          <label>
+            Прямая ссылка:
+          </label>
+
+          <input
+            id="${ID}-banner"
+            type="url"
+            placeholder="https://example.com/banner.png"
+          >
+
+          <label>
+            Или файл с компьютера:
+          </label>
+
+          <div class="local-file">
+            <input
+              id="${ID}-local-banner-file"
+              type="file"
+              accept="image/*"
+            >
+
+            <button
+              id="${ID}-local-banner-clear"
+              type="button"
+            >
+              Удалить локальный баннер
+            </button>
+
+            <div
+              id="${ID}-local-banner-status"
+              class="local-file-status"
+            ></div>
+          </div>
+
+          <label>
+            Режим:
+          </label>
+
+          <select id="${ID}-banner-mode">
+            <option value="cover">Заполнить</option>
+            <option value="contain">Показать целиком</option>
+            <option value="stretch">Растянуть</option>
+          </select>
+
+          <label>
+            Положение:
+          </label>
+
+          <input
+            id="${ID}-banner-position"
+            type="text"
+          >
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>
+          Просмотрщик записей
+        </legend>
+
+        <div class="grid">
+          <label>
+            Отдельная палитра:
+          </label>
+
+          <input
+            id="${ID}-viewer-enabled"
+            type="checkbox"
+          >
+
+          <label>
+            Заголовок — тёмный / средний / светлый:
+          </label>
+
+          <div class="palette">
+            <input id="${ID}-viewer-dark" type="color">
+            <input id="${ID}-viewer-middle" type="color">
+            <input id="${ID}-viewer-light" type="color">
+          </div>
+
+          <label>
+            Основной фон окна:
+          </label>
+
+          <input
+            id="${ID}-viewer-canvas"
+            type="color"
+          >
+
+          <label>
+            Цвет текста:
+          </label>
+
+          <input
+            id="${ID}-viewer-text"
+            type="color"
+          >
+        </div>
+
+        <div class="theme-share-note">
+          Эта палитра применяется к окну «Просмотр записи».
+          Прозрачности здесь специально нет.
+        </div>
+      </fieldset>
+
       ${paletteField(
         'blue',
         'Синие элементы',
@@ -8008,7 +10366,6 @@
         'Кнопки и элементы управления'
       )}
 
-
       <fieldset>
         <legend>
           Всплывающие окна
@@ -8032,6 +10389,7 @@
             id="${ID}-popup-color"
             type="color"
           >
+
         </div>
       </fieldset>
 
@@ -8070,14 +10428,55 @@
         </div>
       </fieldset>
 
-      <div class="actions">
-        <button
-          id="${ID}-preview"
-          type="button"
-        >
-          Проверить
-        </button>
+      <fieldset>
+        <legend>
+          Поделиться темой
+        </legend>
 
+        <div class="grid">
+          <label>
+            Название темы:
+          </label>
+
+          <input
+            id="${ID}-share-name"
+            type="text"
+            maxlength="80"
+            value="Sparx theme"
+          >
+        </div>
+
+        <div class="share-grid">
+          <button id="${ID}-share-code" type="button">
+            Скопировать код
+          </button>
+
+          <button id="${ID}-import-code" type="button">
+            Вставить код
+          </button>
+
+          <button id="${ID}-export-sparx" type="button">
+            Экспорт .sparx
+          </button>
+
+          <button id="${ID}-import-sparx" type="button">
+            Импорт .sparx
+          </button>
+        </div>
+
+        <input
+          id="${ID}-import-sparx-file"
+          type="file"
+          accept=".sparx,application/json"
+          hidden
+        >
+
+        <div class="share-note">
+          Код переносит настройки и ссылки. Файл .sparx дополнительно переносит локальные обои, баннер и шрифт.
+        </div>
+      </fieldset>
+
+      <div class="actions">
         <button
           id="${ID}-close"
           type="button"
@@ -8112,6 +10511,197 @@
       panel.querySelector(
         `#${ID}-${name}`
       );
+
+    get('enabled').checked =
+      settings.enabled;
+
+    get('font').value =
+      settings.font;
+
+    get('font-scale').value =
+      settings.fontScale;
+
+    get('font-scale-label')
+      .textContent =
+        ` ${settings.fontScale}%`;
+
+    get('text-color-enabled')
+      .checked =
+        settings
+          .textColorEnabled;
+
+    get('text-color')
+      .value =
+        settings.textColor;
+
+    get('custom-font-url')
+      .value =
+        settings.customFontUrl;
+
+    get('custom-font-fallback')
+      .value =
+        settings
+          .customFontFallback;
+
+    get('wallpaper-enabled')
+      .checked =
+        settings
+          .wallpaperEnabled;
+
+    get('wallpaper').value =
+      settings.wallpaper;
+
+    get('mode').value =
+      settings
+        .wallpaperMode;
+
+    get('position').value =
+      settings
+        .wallpaperPosition;
+
+    get('banner-enabled').checked =
+      settings.bannerEnabled;
+
+    get('banner').value =
+      settings.banner;
+
+    get('banner-mode').value =
+      settings.bannerMode;
+
+    get('banner-position').value =
+      settings.bannerPosition;
+
+    get('viewer-enabled').checked =
+      settings.viewerEnabled;
+
+    get('viewer-dark').value =
+      settings.viewerDark;
+
+    get('viewer-middle').value =
+      settings.viewerMiddle;
+
+    get('viewer-light').value =
+      settings.viewerLight;
+
+    get('viewer-canvas').value =
+      settings.viewerCanvas;
+
+    get('viewer-text').value =
+      settings.viewerText;
+
+    for (
+      const group
+      of GROUPS
+    ) {
+      get(
+        `${group}-enabled`
+      ).checked =
+        settings[
+          `${group}Enabled`
+        ];
+
+      get(
+        `${group}-dark`
+      ).value =
+        settings[
+          `${group}Dark`
+        ];
+
+      get(
+        `${group}-middle`
+      ).value =
+        settings[
+          `${group}Middle`
+        ];
+
+      get(
+        `${group}-light`
+      ).value =
+        settings[
+          `${group}Light`
+        ];
+    }
+
+    get('blue-transparency')
+      .value =
+        settings
+          .blueTransparency;
+
+    get('blue-transparency-label')
+      .textContent =
+        ` ${settings.blueTransparency}%`;
+
+    get('blue-aero-enabled')
+      .checked =
+        settings
+          .blueAeroEnabled;
+
+    get('blue-blur').value =
+      settings.blueBlur;
+
+    get('blue-blur-label')
+      .textContent =
+        ` ${settings.blueBlur}px`;
+
+    get('blue-saturation')
+      .value =
+        settings
+          .blueSaturation;
+
+    get('blue-saturation-label')
+      .textContent =
+        ` ${settings.blueSaturation}%`;
+
+    get('neutral-transparency')
+      .value =
+        settings
+          .neutralTransparency;
+
+    get('neutral-transparency-label')
+      .textContent =
+        ` ${settings.neutralTransparency}%`;
+
+    get('canvas-transparency')
+      .value =
+        settings
+          .canvasTransparency;
+
+    get('canvas-transparency-label')
+      .textContent =
+        ` ${settings.canvasTransparency}%`;
+
+    get('rounded-enabled')
+      .checked =
+        settings
+          .roundedEnabled;
+
+    const displayedCornerRadius =
+      Math.max(
+        0,
+        Math.min(
+          8,
+          Number(
+            settings.cornerRadius
+          ) || 0
+        )
+      );
+
+    get('corner-radius')
+      .value =
+        displayedCornerRadius;
+
+    get('corner-radius-label')
+      .textContent =
+        ` ${displayedCornerRadius}px`;
+
+    get('popup-opaque-enabled')
+      .checked =
+        settings
+          .popupOpaqueEnabled;
+
+    get('popup-color')
+      .value =
+        settings.popupColor;
 
     function writeSettingsToControls(
       source
@@ -8162,6 +10752,36 @@
 
       get('position').value =
         values.wallpaperPosition;
+
+      get('banner-enabled').checked =
+        values.bannerEnabled;
+
+      get('banner').value =
+        values.banner;
+
+      get('banner-mode').value =
+        values.bannerMode;
+
+      get('banner-position').value =
+        values.bannerPosition;
+
+      get('viewer-enabled').checked =
+        values.viewerEnabled;
+
+      get('viewer-dark').value =
+        values.viewerDark;
+
+      get('viewer-middle').value =
+        values.viewerMiddle;
+
+      get('viewer-light').value =
+        values.viewerLight;
+
+      get('viewer-canvas').value =
+        values.viewerCanvas;
+
+      get('viewer-text').value =
+        values.viewerText;
 
       for (
         const group
@@ -8269,11 +10889,8 @@
       get('popup-color')
         .value =
           values.popupColor;
-    }
 
-    writeSettingsToControls(
-      settings
-    );
+    }
 
     setFontStatus(
       fontCache.status
@@ -8293,6 +10910,13 @@
         localWallpaperAsset
           ? `Используются локально: ${localWallpaperAsset.name} (${formatFileSize(localWallpaperAsset.size)})`
           : 'Локальные обои не выбраны. При наличии файла он имеет приоритет над ссылкой.';
+
+      get(
+        'local-banner-status'
+      ).textContent =
+        localBannerAsset
+          ? `Используется локально: ${localBannerAsset.name} (${formatFileSize(localBannerAsset.size)})`
+          : 'Локальный баннер не выбран. При наличии файла он имеет приоритет над ссылкой.';
     }
 
     updateLocalFileStatus();
@@ -8350,6 +10974,16 @@
           )
         );
 
+      const hasBanner =
+        Boolean(
+          readStoredAsset(
+            themeSlotAssetKey(
+              'banner',
+              index
+            )
+          )
+        );
+
       const hasFont =
         Boolean(
           readStoredAsset(
@@ -8365,6 +10999,12 @@
       if (hasWallpaper) {
         extras.push(
           'локальные обои'
+        );
+      }
+
+      if (hasBanner) {
+        extras.push(
+          'локальный баннер'
         );
       }
 
@@ -8442,7 +11082,7 @@
             );
 
             window.alert(
-              'Не удалось сохранить тему в эту ячейку. Если в ней используются очень большие локальные файлы, попробуй уменьшить их размер.'
+              'Не удалось сохранить тему в эту ячейку. Если в ней используются очень большие файлы, попробуйте уменьшить их размер.'
             );
 
             return;
@@ -8558,6 +11198,10 @@
             index
           );
         };
+
+      updateThemeSlotUi(
+        index
+      );
     }
 
     get(
@@ -8673,6 +11317,49 @@
         void rebuild();
       };
 
+    get(
+      'local-banner-file'
+    ).onchange =
+      async () => {
+        const file =
+          get(
+            'local-banner-file'
+          ).files?.[0];
+
+        if (!file) {
+          return;
+        }
+
+        const ok =
+          await storeLocalAsset(
+            'banner',
+            file
+          );
+
+        get(
+          'local-banner-file'
+        ).value = '';
+
+        if (ok) {
+          get('banner-enabled').checked = true;
+          settings = readSettings();
+          GM_setValue(KEY, settings);
+          updateLocalFileStatus();
+          void rebuild();
+        }
+      };
+
+    get(
+      'local-banner-clear'
+    ).onclick =
+      () => {
+        clearLocalAsset('banner');
+        updateLocalFileStatus();
+        settings = readSettings();
+        GM_setValue(KEY, settings);
+        void rebuild();
+      };
+
     const sliders = [
       [
         'font-scale',
@@ -8785,6 +11472,49 @@
             .trim() ||
           'center center',
 
+        bannerEnabled:
+          get('banner-enabled')
+            .checked,
+
+        banner:
+          get('banner')
+            .value
+            .trim(),
+
+        bannerMode:
+          get('banner-mode')
+            .value,
+
+        bannerPosition:
+          get('banner-position')
+            .value
+            .trim() ||
+          'center center',
+
+        viewerEnabled:
+          get('viewer-enabled')
+            .checked,
+
+        viewerDark:
+          get('viewer-dark')
+            .value,
+
+        viewerMiddle:
+          get('viewer-middle')
+            .value,
+
+        viewerLight:
+          get('viewer-light')
+            .value,
+
+        viewerCanvas:
+          get('viewer-canvas')
+            .value,
+
+        viewerText:
+          get('viewer-text')
+            .value,
+
         blueTransparency:
           Number(
             get(
@@ -8849,6 +11579,7 @@
         popupColor:
           get('popup-color')
             .value,
+
       };
 
       for (
@@ -8887,12 +11618,122 @@
       return next;
     }
 
-    get('preview').onclick =
+    get('enabled').onchange =
       () => {
-        settings =
-          readSettings();
+        settings = readSettings();
+        GM_setValue(KEY, settings);
+        void rebuild().then(() => {
+          scheduleDynamicRefresh(0, null, true);
+          scheduleIntegratedApply(0);
+          scheduleSettledFullRefresh();
+        });
+      };
 
+    let panelPreviewTimer = 0;
+
+    const schedulePanelPreview = () => {
+      clearTimeout(panelPreviewTimer);
+      panelPreviewTimer = window.setTimeout(() => {
+        if (!panel.isConnected) return;
+        settings = readSettings();
         void rebuild();
+      }, 120);
+    };
+
+    panel.querySelectorAll(`
+      input[type="checkbox"]:not(#${ID}-enabled),
+      input[type="color"],
+      input[type="range"],
+      select
+    `).forEach((control) => {
+      control.addEventListener('change', schedulePanelPreview);
+    });
+
+    panel.querySelectorAll('input[type="range"]').forEach((control) => {
+      control.addEventListener('input', schedulePanelPreview);
+    });
+
+    for (const id of ['wallpaper', 'position', 'banner', 'banner-position', 'custom-font-url']) {
+      get(id)?.addEventListener('change', schedulePanelPreview);
+    }
+
+    get('share-code').onclick =
+      async () => {
+        try {
+          const draft = readSettings();
+          const name = get('share-name').value.trim() || 'Sparx theme';
+          const code = currentThemeShareCode(draft, name);
+          const copied = await copyText(code);
+
+          if (copied) {
+            window.alert(
+              'Код темы скопирован. Локальные обои, баннер и шрифт в код не входят — для полного переноса используй .sparx.'
+            );
+          } else {
+            window.prompt('Скопируй код темы:', code);
+          }
+        } catch (error) {
+          console.error('[Sparx] Не удалось создать код темы:', error);
+          window.alert(error?.message || 'Не удалось создать код темы.');
+        }
+      };
+
+    get('export-sparx').onclick =
+      () => {
+        try {
+          const draft = readSettings();
+          const name = get('share-name').value.trim() || 'Sparx theme';
+          downloadSharedTheme(draft, name);
+        } catch (error) {
+          console.error('[Sparx] Не удалось экспортировать .sparx:', error);
+          window.alert(error?.message || 'Не удалось экспортировать тему.');
+        }
+      };
+
+    get('import-code').onclick =
+      () => {
+        const code = window.prompt('Вставь код темы Sparx:');
+        if (!code) return;
+
+        try {
+          const imported = applyImportedTheme(
+            parseThemeShareCode(code),
+            false
+          );
+          window.alert(`Тема «${imported.name}» импортирована. Страница будет обновлена.`);
+          location.reload();
+        } catch (error) {
+          console.error('[Sparx] Не удалось импортировать код темы:', error);
+          window.alert(error?.message || 'Не удалось импортировать код темы.');
+        }
+      };
+
+    const importSparxFile = get('import-sparx-file');
+
+    get('import-sparx').onclick =
+      () => {
+        importSparxFile.value = '';
+        importSparxFile.click();
+      };
+
+    importSparxFile.onchange =
+      async () => {
+        const file = importSparxFile.files?.[0];
+        if (!file) return;
+
+        if (file.size > 64 * 1024 * 1024) {
+          window.alert('Файл темы слишком большой. Максимум для импортера — 64 МБ.');
+          return;
+        }
+
+        try {
+          const imported = applyImportedTheme(await file.text(), true);
+          window.alert(`Тема «${imported.name}» импортирована. Страница будет обновлена.`);
+          location.reload();
+        } catch (error) {
+          console.error('[Sparx] Не удалось импортировать .sparx:', error);
+          window.alert(error?.message || 'Не удалось импортировать файл темы.');
+        }
       };
 
     get('save').onclick =
@@ -8940,6 +11781,10 @@
           'font'
         );
 
+        clearLocalAsset(
+          'banner'
+        );
+
         for (
           const oldKey
           of OLD_KEYS
@@ -8973,34 +11818,249 @@
         uiStyle
       );
 
-    const button =
-      document.createElement(
-        'button'
+    function cleanSidebarLabel(element) {
+      return normalizedText(element)
+        .replace(/[⚙️⚙🎨🖌️🖼️]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function sidebarContextScore(element) {
+      if (!(element instanceof HTMLElement)) return -Infinity;
+
+      let score = 0;
+      const rect = element.getBoundingClientRect();
+
+      if (rect.left < Math.max(360, innerWidth * 0.32)) score += 8;
+      if (rect.width > 40 && rect.width < 420) score += 2;
+
+      let node = element;
+      for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
+        const text = normalizedText(node);
+
+        for (const token of [
+          'Моя страница',
+          'Новости',
+          'Сообщения',
+          'Друзья',
+          'Сообщества',
+          'Музыка',
+          'Правовая информация',
+        ]) {
+          if (text.includes(token)) score += 5;
+        }
+
+        if (text.length > 1200) break;
+      }
+
+      return score;
+    }
+
+    function sidebarSettingsLabel() {
+      const selectors =
+        'a,button,[role="link"],[role="button"],[onclick],li,td,div,span';
+
+      const candidates = [...document.querySelectorAll(selectors)]
+        .filter(
+          (element) =>
+            element instanceof HTMLElement &&
+            cleanSidebarLabel(element) === 'Настройки'
+        )
+        .map((element) => ({
+          element,
+          score: sidebarContextScore(element),
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      if (candidates.length) {
+        return candidates[0].element;
+      }
+
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT
       );
 
-    button.id =
-      `${ID}-button`;
+      const textCandidates = [];
+      let node;
 
-    button.type =
-      'button';
+      while ((node = walker.nextNode())) {
+        if (String(node.nodeValue || '').replace(/\s+/g, ' ').trim() !== 'Настройки') {
+          continue;
+        }
 
-    button.textContent =
-      '🎨';
+        if (node.parentElement instanceof HTMLElement) {
+          textCandidates.push({
+            element: node.parentElement,
+            score: sidebarContextScore(node.parentElement),
+          });
+        }
+      }
 
-    button.title =
-      'Настроить тему';
+      textCandidates.sort((a, b) => b.score - a.score);
+      if (textCandidates.length) return textCandidates[0].element;
 
-    button.onclick =
-      openPanel;
+      return [...document.querySelectorAll('a[href]')]
+        .map((element) => ({
+          element,
+          score: sidebarContextScore(element),
+        }))
+        .filter(({ element }) => {
+          const href = String(element.getAttribute('href') || '');
+          return /(?:settings?|options?|preferences?)/i.test(href);
+        })
+        .sort((a, b) => b.score - a.score)[0]?.element || null;
+    }
 
-    document.body.append(
-      button
-    );
+    function sidebarRowFor(labelElement) {
+      if (!(labelElement instanceof HTMLElement)) return null;
 
-    /*
-     * Пересобирает тему,
-     * когда сайт добавляет новый CSS.
-     */
+      const clickable =
+        labelElement.closest(
+          'a,button,[role="link"],[role="button"],[onclick]'
+        ) ||
+        labelElement;
+
+      let row = clickable;
+      let cursor = clickable;
+
+      for (let depth = 0; depth < 5; depth += 1) {
+        const parent = cursor.parentElement;
+        if (!parent || parent === document.body || parent === document.documentElement) break;
+
+        const parentText = cleanSidebarLabel(parent);
+        if (parentText !== 'Настройки') break;
+
+        row = parent;
+        cursor = parent;
+      }
+
+      return row;
+    }
+
+    function replaceSettingsLabelWithSparx(root) {
+      const walker = document.createTreeWalker(
+        root,
+        NodeFilter.SHOW_TEXT
+      );
+
+      let node;
+      let replaced = false;
+
+      while ((node = walker.nextNode())) {
+        const value = String(node.nodeValue || '');
+        const clean = value.replace(/[⚙️⚙🎨🖌️🖼️]/g, '').replace(/\s+/g, ' ').trim();
+
+        if (clean === 'Настройки') {
+          node.nodeValue = 'Sparx';
+          replaced = true;
+          break;
+        }
+      }
+
+      if (!replaced) {
+        const target = root.matches?.('a,button,[role="link"],[role="button"]')
+          ? root
+          : root.querySelector?.('a,button,[role="link"],[role="button"]') || root;
+
+        if (target instanceof HTMLElement) {
+          target.textContent = 'Sparx';
+        }
+      }
+
+      root.querySelectorAll('img,svg,picture').forEach((element) => {
+        element.remove();
+      });
+
+      const iconWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let iconNode;
+      while ((iconNode = iconWalker.nextNode())) {
+        iconNode.nodeValue = String(iconNode.nodeValue || '')
+          .replace(/[⚙️⚙🎨🖌️🖼️]/g, '');
+      }
+    }
+
+    function buildSidebarEntry(row) {
+      const clone = row.cloneNode(true);
+      clone.id = `${ID}-menu-entry`;
+      clone.dataset.sparxMenuEntry = '1';
+      clone.removeAttribute('onclick');
+      clone.removeAttribute('href');
+      clone.removeAttribute('target');
+
+      clone.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'));
+      clone.querySelectorAll('[onclick]').forEach((element) => element.removeAttribute('onclick'));
+      clone.querySelectorAll('[href]').forEach((element) => element.removeAttribute('href'));
+      clone.querySelectorAll('[target]').forEach((element) => element.removeAttribute('target'));
+
+      replaceSettingsLabelWithSparx(clone);
+
+      const clickable = clone.matches(
+        'a,button,[role="link"],[role="button"]'
+      )
+        ? clone
+        : clone.querySelector(
+            'a,button,[role="link"],[role="button"]'
+          ) || clone;
+
+      if (clickable instanceof HTMLElement) {
+        clickable.setAttribute('role', 'button');
+        clickable.setAttribute('tabindex', '0');
+        clickable.setAttribute('aria-label', 'Sparx');
+        clickable.style.cursor = 'pointer';
+      }
+
+      const activate = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openPanel();
+      };
+
+      clone.addEventListener('click', activate);
+      clone.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') activate(event);
+      });
+
+      return clone;
+    }
+
+    function ensureSidebarEntry() {
+      document.getElementById(`${ID}-button`)?.remove();
+
+      const settingsLabel = sidebarSettingsLabel();
+      if (!settingsLabel) return null;
+
+      const row = sidebarRowFor(settingsLabel);
+      if (!(row instanceof HTMLElement) || !row.parentElement) return null;
+
+      const entries = [...document.querySelectorAll(`[id="${ID}-menu-entry"]`)];
+      let current = entries.shift() || null;
+
+      for (const duplicate of entries) duplicate.remove();
+
+      const alreadyCorrect = Boolean(
+        current?.isConnected &&
+        current.parentElement === row.parentElement &&
+        row.nextElementSibling === current &&
+        cleanSidebarLabel(current) === 'Sparx'
+      );
+
+      if (alreadyCorrect) return current;
+
+      current?.remove();
+      current = buildSidebarEntry(row);
+      row.insertAdjacentElement('afterend', current);
+      return current;
+    }
+
+    ensureSidebarEntry();
+    setTimeout(ensureSidebarEntry, 350);
+    setTimeout(ensureSidebarEntry, 1200);
+
+    window.setInterval(() => {
+      if (!document.hidden) ensureSidebarEntry();
+    }, 2500);
+
     new MutationObserver(
       (mutations) => {
         const stylesheetChanged =
@@ -9022,6 +12082,7 @@
                       `${ID}-theme`,
                       `${ID}-effects`,
                       `${ID}-ui`,
+                      FONT_STYLE_ID,
                     ].includes(
                       node.id
                     );
@@ -9066,11 +12127,6 @@
       }
     );
 
-    /*
-     * Динамический DOM обрабатывается точечно: вместо
-     * полного сканирования всей страницы на каждый пост
-     * очередь хранит только реально изменившиеся ветки.
-     */
     new MutationObserver(
       (mutations) => {
         const roots = [];
@@ -9093,7 +12149,8 @@
               ) ||
               target.closest(
                 `#${ID}-panel`
-              )
+              ) ||
+              activeBannerTouched.has(target)
             ) {
               continue;
             }
@@ -9190,6 +12247,8 @@
           return;
         }
 
+        ensureSidebarEntry();
+
         scheduleIntegratedApply(
           25
         );
@@ -9198,6 +12257,8 @@
           70,
           roots
         );
+
+        scheduleSettledFullRefresh();
       }
     ).observe(
       document.body,
@@ -9211,6 +12272,9 @@
         attributeFilter: [
           'class',
           'hidden',
+          'src',
+          'open',
+          'aria-hidden',
         ],
       }
     );
@@ -9336,11 +12400,6 @@
       }
     );
 
-    /*
-     * Скролл больше не запускает полный перескан: новые
-     * записи ловятся MutationObserver-ом по изменённой ветке.
-     */
-
     let observedLocation =
       location.href;
 
@@ -9361,10 +12420,24 @@
         );
 
         scheduleDynamicRefresh(
-          220,
+          120,
           null,
           true
         );
+
+        scheduleSettledFullRefresh();
+
+        for (const delay of [320, 800, 1600]) {
+          window.setTimeout(
+            () => {
+              ensureSidebarEntry();
+              refreshNativeZones();
+              scheduleDynamicRefresh(0, null, true);
+              scheduleIntegratedApply(0);
+            },
+            delay
+          );
+        }
       };
 
     for (
@@ -9415,16 +12488,16 @@
     document.addEventListener(
       'click',
 
-      () =>
-        scheduleIntegratedApply(
-          90
-        ),
+      () => {
+        scheduleIntegratedApply(90);
+        scheduleDynamicRefresh(110, null, true);
+      },
 
       true
     );
 
     GM_registerMenuCommand(
-      '🎨 Настроить тему',
+      'Sparx — Настройки',
       openPanel
     );
 
@@ -9453,6 +12526,10 @@
 
         clearLocalAsset(
           'font'
+        );
+
+        clearLocalAsset(
+          'banner'
         );
 
         for (
@@ -9484,29 +12561,51 @@
           )
       );
 
+    refreshNativeZones();
+
     setTimeout(
       () =>
         void rebuild(),
 
-      120
+      90
     );
 
-    setTimeout(
-      () =>
-        scheduleIntegratedApply(0),
+    setTimeout(scheduleSettledFullRefresh, 260);
 
-      180
+    for (const delay of [180, 420, 900, 1500, 2600]) {
+      setTimeout(
+        () => {
+          ensureSidebarEntry();
+          refreshNativeZones();
+          scheduleIntegratedApply(0);
+          scheduleDynamicRefresh(0, null, true);
+        },
+        delay
+      );
+    }
+
+    window.addEventListener(
+      'load',
+      () => {
+        refreshNativeZones();
+        scheduleDynamicRefresh(0, null, true);
+        scheduleIntegratedApply(0);
+        scheduleSettledFullRefresh();
+      },
+      { once: true }
     );
 
-    setTimeout(
-      () =>
-        scheduleDynamicRefresh(
-          0,
-          null,
-          true
-        ),
-
-      1300
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (!document.hidden) {
+          ensureSidebarEntry();
+          refreshNativeZones();
+          scheduleDynamicRefresh(0, null, true);
+          scheduleIntegratedApply(0);
+          scheduleSettledFullRefresh();
+        }
+      }
     );
   }
 
@@ -9519,6 +12618,10 @@
 
       revokeLocalAssetUrl(
         'font'
+      );
+
+      revokeLocalAssetUrl(
+        'banner'
       );
     }
   );
