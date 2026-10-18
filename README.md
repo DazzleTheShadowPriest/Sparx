@@ -24,7 +24,7 @@
    Если переключатель отсутствует, откройте chrome://extensions или edge://extensions и включите Режим разработчика.
 3. Нажмите ссылку ниже и подтвердите установку скрипта.
 
-[Установить Sparx](https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/refs/heads/main/Sparx-v1.3.user.js)
+[Установить Sparx](https://raw.githubusercontent.com/DazzleTheShadowPriest/Sparx/main/Sparx.user.js)
 
 4. Перезапустите сайт при нажатии Ctrl + F5.
 
